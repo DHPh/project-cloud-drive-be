@@ -1,0 +1,11 @@
+.git
+.local-docs
+**/.local-docs
+.env
+.env.*
+**/.env
+**/.env.*
+node_modules
+**/node_modules
+dist
+coverage

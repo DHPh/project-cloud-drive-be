@@ -1,9 +1,17 @@
 # Thiết kế backend
 
-**Trạng thái: dự thảo.** Đọc [hợp đồng HTTP](../../docs/contracts/README.md) để triển khai route và DTO.
+DRIVE-01 dùng các route và DTO trong [hợp đồng HTTP](contracts/README.md).
 
-- **Quyền:** xác thực phiên và kiểm tra quyền tài nguyên ở use case. Quyết định cho phép đọc hoặc sửa dựa trên người dùng, trạng thái tài nguyên và quyền hiện hành. DTO xuất ra chỉ chứa trường cần cho chức năng gọi nó.
-- **Upload và quota:** validate đầu vào và quyền thư mục trước khi ghi object. Giữ quota bằng cập nhật nguyên tử, ghi metadata theo trạng thái xử lý, và có đường dọn hoặc thử lại khi MinIO và PostgreSQL cập nhật lệch nhau. Kiểm thử trường hợp hai upload đồng thời.
-- **Download và preview:** dùng bucket private. Stream dữ liệu sau khi kiểm tra quyền, xử lý tên Unicode đúng header và tránh shared cache cho tệp riêng tư. HTML preview cần tạo nội dung bất hoạt và cô lập khỏi phiên ứng dụng.
-- **Thùng rác:** giữ ID tài nguyên và quan hệ qua soft delete. Dọn object qua luồng có thể retry và đối soát quota. Xem quyết định sản phẩm ở [TRASH-01](../../docs/use-cases.md#trash-01--xóa-khôi-phục-và-dọn-thùng-rác).
-- **Schema:** migration là đường tạo và nâng cấp DB. Kiểm tra migration trên DB trống và trên snapshot fixture khi có dữ liệu cũ. Ghi cách phục hồi theo thay đổi dữ liệu cụ thể.
+## Phiên và quyền
+
+Cookie phiên là giá trị ngẫu nhiên. PostgreSQL lưu SHA-256 của giá trị ấy cùng hạn dùng. API kiểm tra thời hạn trên từng request, yêu cầu `Origin` khớp `APP_ORIGIN` khi ghi và yêu cầu cookie `Secure` ở cấu hình production. Lượt tải và duyệt chỉ đọc tài nguyên thuộc chủ sở hữu hiện tại. JSON trả theo DTO và phản hồi tệp dùng `Cache-Control: private, no-store`.
+
+## Vòng đời upload
+
+API kiểm tra multipart và quyền thư mục, tăng `used_bytes` có điều kiện rồi tạo bản ghi `pending` trong cùng transaction. Khoá PostgreSQL theo ID upload giữ độc quyền trong lúc ghi object và chuyển bản ghi thành `ready`. Chỉ tệp `ready` xuất hiện trong danh sách và được tải xuống. Lần tải xuống lấy object từ bucket private qua backend và stream với tên UTF-8.
+
+Lỗi ghi object chuyển bản ghi sang `cleanup` nếu PostgreSQL còn sẵn sàng. Nếu app dừng hoặc DB gián đoạn trước khi hoàn tất, bản ghi `pending` vẫn giữ object key và quota để đối soát. Tác vụ nền hoặc `npm run storage:reconcile` dọn batch tồn đọng sau khoảng `UPLOAD_RECOVERY_AGE_SECONDS` (mặc định 300 giây). Tác vụ giữ thông tin để thử lại khi storage lỗi, và giảm quota cùng lúc xóa bản ghi sau khi storage xác nhận xóa. Tệp đã ở trạng thái `ready` được giữ lại khi mất phản hồi giữa client và API.
+
+## Migration và kiểm thử
+
+Chạy migration một lần trước khi khởi động bản phát hành. Seed chỉ dành cho môi trường phát triển và tạo fixture tổng hợp trong PostgreSQL cùng object tương ứng trong bucket. Xem [cách chạy kiểm thử và quy trình phát hành](verification.md).

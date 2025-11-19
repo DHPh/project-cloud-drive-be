@@ -1,0 +1,36 @@
+{
+  "name": "@cloud-drive/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "infra:up": "docker compose up -d --wait",
+    "infra:down": "docker compose down",
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "start": "node --env-file-if-exists=.env dist/main.js",
+    "db:migrate": "node --env-file-if-exists=.env --import tsx src/cli.ts migrate",
+    "db:seed": "node --env-file-if-exists=.env --import tsx src/cli.ts seed",
+    "db:setup": "npm run db:migrate && npm run db:seed",
+    "storage:reconcile": "node --env-file-if-exists=.env --import tsx src/cli.ts reconcile",
+    "test": "node --env-file-if-exists=.env --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.888.0",
+    "busboy": "^1.6.0",
+    "express": "^5.1.0",
+    "pg": "^8.16.3",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.27",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/busboy": "^1.5.4",
+    "@types/express": "^5.0.5",
+    "@types/node": "^22.13.10",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
