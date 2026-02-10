@@ -23,10 +23,14 @@ test('production requires a matching HTTPS origin and Secure cookie', () => {
   assert.equal(appConfig({ NODE_ENV: 'production', APP_ORIGIN: 'https://drive.example.test' }).secureCookie, true);
 });
 
-test('attachment disposition contains a plain fallback and encoded UTF-8 name', () => {
+test('attachment disposition keeps an exact name for ASCII and Unicode', () => {
+  assert.equal(
+    attachmentHeader('Report 1.txt'),
+    "attachment; filename=\"Report 1.txt\"; filename*=UTF-8''Report%201.txt"
+  );
   assert.equal(
     attachmentHeader("Kế hoạch (đợt 1)'s.txt"),
-    "attachment; filename=\"Ke hoach (dot 1)'s.txt\"; filename*=UTF-8''K%E1%BA%BF%20ho%E1%BA%A1ch%20%28%C4%91%E1%BB%A3t%201%29%27s.txt"
+    "attachment; filename*=UTF-8''K%E1%BA%BF%20ho%E1%BA%A1ch%20%28%C4%91%E1%BB%A3t%201%29%27s.txt"
   );
 });
 

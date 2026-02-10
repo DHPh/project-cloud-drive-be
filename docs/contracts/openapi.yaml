@@ -258,11 +258,11 @@ paths:
           headers:
             Content-Disposition:
               description: >-
-                Attachment disposition with a safe ASCII filename fallback and a
-                filename* parameter containing the percent-encoded UTF-8 display name.
+                Attachment disposition with the percent-encoded UTF-8 display name in filename*.
+                filename is included when the same display name fits in the ASCII parameter.
               schema:
                 type: string
-              example: "attachment; filename=\"bao-cao.pdf\"; filename*=UTF-8''b%C3%A1o-c%C3%A1o.pdf"
+              example: "attachment; filename*=UTF-8''b%C3%A1o-c%C3%A1o.pdf"
             Cache-Control:
               $ref: '#/components/headers/PrivateCache'
           content:

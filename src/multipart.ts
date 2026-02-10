@@ -80,12 +80,10 @@ export function readUpload(req: Request, maxBytes: number): Promise<Upload> {
 }
 
 export function attachmentHeader(originalName: string): string {
-  const fallback = originalName.normalize('NFKD')
-    .replace(/\p{M}/gu, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .replace(/[^\x20-\x7E]|["\\]/g, '_');
   const utf8 = encodeURIComponent(originalName)
     .replace(/['()*]/g, (character) => '%' + character.charCodeAt(0).toString(16).toUpperCase());
-  return 'attachment; filename="' + fallback + '"; filename*=UTF-8' + "''" + utf8;
+  // Some WebKit versions prefer filename when both parameters are present.
+  const exactAsciiName = /^[\x20-\x7E]+$/.test(originalName) && !/["\\]/.test(originalName);
+  const filename = exactAsciiName ? `filename="${originalName}"; ` : '';
+  return `attachment; ${filename}filename*=UTF-8''${utf8}`;
 }
