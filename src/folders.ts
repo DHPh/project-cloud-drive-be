@@ -55,7 +55,8 @@ export async function listFolder(
       UNION ALL
       SELECT id, 1, original_name, NULL, original_name, folder_id, mime_type, size_bytes, description, tags,
         created_at, updated_at
-      FROM files WHERE owner_id = $1 AND folder_id IS NOT DISTINCT FROM $2::uuid AND upload_state = 'ready'
+      FROM files WHERE owner_id = $1 AND folder_id IS NOT DISTINCT FROM $2::uuid
+        AND upload_state = 'ready' AND trashed_at IS NULL
     ), matching AS (
       SELECT * FROM direct_children WHERE $3 = '' OR strpos(lower(name), lower($3)) > 0
     ), page_items AS (

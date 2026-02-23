@@ -17,6 +17,9 @@ export type FileRow = {
   updated_at: Date | string;
 };
 
+type TrashStateRow = { id: string; trashed_at: Date | null };
+type TrashedFileRow = FileRow & { trashed_at: string };
+
 export function fileSummary(file: FileRow) {
   return {
     kind: 'file' as const,
@@ -146,7 +149,7 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
           description = CASE WHEN $4::boolean THEN $5::text ELSE description END,
           tags = COALESCE($6::text[], tags),
           updated_at = now()
-        WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready'
+        WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready' AND trashed_at IS NULL
         RETURNING ${fileFields}
       )
       SELECT * FROM changed
@@ -156,10 +159,10 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
   }
 
   async function download(ownerId: string, fileId: string) {
-    const [file] = await db.query<{ object_key: string; original_name: string; size_bytes: string }[]>(
-      "SELECT object_key, original_name, size_bytes FROM files WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready'",
-      [fileId, ownerId]
-    );
+    const [file] = await db.query<{ object_key: string; original_name: string; size_bytes: string }[]>(`
+      SELECT object_key, original_name, size_bytes FROM files
+      WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready' AND trashed_at IS NULL
+    `, [fileId, ownerId]);
     if (!file) throw notFound();
 
     try {
@@ -169,6 +172,55 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
       reportFailure('File download failed in object storage', error);
       throw storageUnavailable();
     }
+  }
+
+  async function setTrashed(ownerId: string, fileId: string, trashed: boolean) {
+    return db.transaction(async (manager) => {
+      const [file] = await manager.query<TrashStateRow[]>(`
+        SELECT id, trashed_at FROM files
+        WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready'
+        FOR UPDATE
+      `, [fileId, ownerId]);
+      if (!file) throw notFound();
+
+      if ((file.trashed_at !== null) === trashed) {
+        return { id: file.id, trashedAt: file.trashed_at?.toISOString() ?? null };
+      }
+
+      const [updated] = await manager.query<TrashStateRow[]>(`
+        WITH changed AS (
+          UPDATE files SET trashed_at = CASE WHEN $3::boolean THEN statement_timestamp() ELSE NULL END
+          WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready'
+          RETURNING id, trashed_at
+        )
+        SELECT * FROM changed
+      `, [fileId, ownerId, trashed]);
+      if (!updated) throw new Error('Locked file could not be updated');
+      return { id: updated.id, trashedAt: updated.trashed_at?.toISOString() ?? null };
+    });
+  }
+
+  async function listTrash(ownerId: string, { page, limit }: { page: number; limit: number }) {
+    const offset = (BigInt(page - 1) * BigInt(limit)).toString();
+    const [result] = await db.query<{ total: string; items: TrashedFileRow[] }[]>(`
+      WITH matching AS NOT MATERIALIZED (
+        SELECT ${fileFields}, trashed_at FROM files
+        WHERE owner_id = $1 AND upload_state = 'ready' AND trashed_at IS NOT NULL
+      ), page_items AS (
+        SELECT * FROM matching ORDER BY trashed_at DESC, id LIMIT $2 OFFSET $3::bigint
+      )
+      SELECT (SELECT count(*) FROM matching) AS total,
+        COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY trashed_at DESC, id) FROM page_items p), '[]') AS items
+    `, [ownerId, limit, offset]);
+    if (!result) throw new Error('Trash query returned no summary');
+
+    const total = Number(result.total);
+    return {
+      data: {
+        items: result.items.map((file) => ({ ...fileSummary(file), trashedAt: new Date(file.trashed_at).toISOString() })),
+      },
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   }
 
   async function reconcile(signal?: AbortSignal): Promise<{ removed: number; failed: number }> {
@@ -211,5 +263,5 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
     return { removed, failed };
   }
 
-  return { upload, update, download, reconcile };
+  return { upload, update, download, setTrashed, listTrash, reconcile };
 }

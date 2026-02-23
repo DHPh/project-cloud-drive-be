@@ -19,7 +19,10 @@ async function main(): Promise<void> {
     await db.initialize();
     const [schema] = await db.query<{ exists: boolean }[]>(`
       SELECT to_regclass('users') IS NOT NULL AND to_regclass('sessions') IS NOT NULL
-        AND to_regclass('folders') IS NOT NULL AND to_regclass('files') IS NOT NULL AS exists
+        AND to_regclass('folders') IS NOT NULL AND EXISTS (
+          SELECT 1 FROM pg_attribute
+          WHERE attrelid = to_regclass('files') AND attname = 'trashed_at' AND NOT attisdropped
+        ) AS exists
     `);
     if (!schema?.exists) {
       console.error('Database schema missing. Run the migration command before starting.');

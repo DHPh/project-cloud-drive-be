@@ -19,9 +19,12 @@ function positiveInteger(max = Number.MAX_SAFE_INTEGER) {
   return z.string().regex(/^\d+$/).transform(Number).pipe(z.int().min(1).max(max));
 }
 
-export const folderQuerySchema = z.strictObject({
+export const paginationQuerySchema = z.strictObject({
   page: positiveInteger().default(1),
   limit: positiveInteger(100).default(20),
+});
+
+export const folderQuerySchema = paginationQuerySchema.extend({
   q: z.string().max(255).refine(isDbText).transform((value) => value.trim()).default(''),
 });
 

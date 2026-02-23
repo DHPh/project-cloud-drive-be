@@ -8,7 +8,9 @@ import { listFolder } from './folders';
 import { attachmentHeader, readUpload } from './multipart';
 import type { ObjectStorage } from './object-storage';
 import { createSessions } from './session';
-import { fileIdSchema, folderIdSchema, folderQuerySchema, loginSchema, updateFileSchema } from './validation';
+import {
+  fileIdSchema, folderIdSchema, folderQuerySchema, loginSchema, paginationQuerySchema, updateFileSchema,
+} from './validation';
 
 function rateLimited(res: Response, retryAfter: number): never {
   res.setHeader('Retry-After', String(retryAfter));
@@ -117,6 +119,24 @@ export function createApp(
       user.id, fileIdSchema.parse(req.params.fileId), updateFileSchema.parse(req.body)
     );
     res.json({ success: true, data: file });
+  });
+
+  api.post('/files/:fileId/trash', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const data = await files.setTrashed(user.id, fileIdSchema.parse(req.params.fileId), true);
+    res.json({ success: true, data });
+  });
+
+  api.post('/files/:fileId/restore', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const data = await files.setTrashed(user.id, fileIdSchema.parse(req.params.fileId), false);
+    res.json({ success: true, data });
+  });
+
+  api.get('/trash', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await files.listTrash(user.id, paginationQuerySchema.parse(req.query));
+    res.json({ success: true, ...result });
   });
 
   api.get('/files/:fileId/download', async (req, res) => {
