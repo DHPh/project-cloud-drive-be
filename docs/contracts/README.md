@@ -8,4 +8,6 @@ OpenAPI `0.2.0` bổ sung TRASH-01 cho từng tệp. Chủ sở hữu dùng `GET
 
 API dùng base path `/api/v1` và cookie phiên cùng origin. Request ghi cần `Origin` khớp `APP_ORIGIN`. Phản hồi riêng tư, kể cả lỗi, dùng `Cache-Control: private, no-store`. Tham khảo repo backend để cấu hình origin và kiểm thử. [Cách chạy](../../README.md) · [Kiểm chứng](../verification.md)
 
+OpenAPI `0.3.0` bổ sung SHARE-01. Chủ tệp quản lý quyền ở `/files/{fileId}/shares`. Người được cấp quyền còn hạn thấy tệp trong `/shared-with-me` và có thể đọc thông tin, tải xuống. `expiresAt` được trả về với thời điểm hết hạn thực tế. Bỏ trống khi cấp mới mặc định một tháng theo lịch Việt Nam. Gọi lại khi quyền đang hoạt động giữ thời hạn hiện tại nếu vẫn bỏ trống. Thu hồi quyền hoặc đưa tệp vào Thùng rác cắt quyền ngay. Khôi phục tệp về trạng thái riêng tư.
+
 Khi mất kết nối trước khi nhận phản hồi upload, làm mới danh sách để đối soát kết quả trước khi gửi lại. Khi đổi API, cập nhật schema và kiểm tra request, response và dữ liệu thật trong môi trường tổng hợp.

@@ -35,7 +35,16 @@ export function fileSummary(file: FileRow) {
   };
 }
 
-const fileFields = 'id, original_name, folder_id, mime_type, size_bytes, description, tags, created_at, updated_at';
+export const fileFields = 'id, original_name, folder_id, mime_type, size_bytes, description, tags, created_at, updated_at';
+
+const fileReadAccess = `
+  id = $1 AND upload_state = 'ready' AND trashed_at IS NULL AND (
+    owner_id = $2 OR EXISTS (
+      SELECT 1 FROM file_shares
+      WHERE file_id = files.id AND recipient_id = $2 AND expires_at > statement_timestamp()
+    )
+  )
+`;
 
 async function withUploadLock<T>(
   db: DataSource, id: string, wait: boolean, work: (runner: QueryRunner) => Promise<T>
@@ -158,11 +167,18 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
     return fileSummary(file);
   }
 
-  async function download(ownerId: string, fileId: string) {
+  async function get(userId: string, fileId: string) {
+    const [file] = await db.query<FileRow[]>(
+      `SELECT ${fileFields} FROM files WHERE ${fileReadAccess}`, [fileId, userId]
+    );
+    if (!file) throw notFound();
+    return fileSummary(file);
+  }
+
+  async function download(userId: string, fileId: string) {
     const [file] = await db.query<{ object_key: string; original_name: string; size_bytes: string }[]>(`
-      SELECT object_key, original_name, size_bytes FROM files
-      WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready' AND trashed_at IS NULL
-    `, [fileId, ownerId]);
+      SELECT object_key, original_name, size_bytes FROM files WHERE ${fileReadAccess}
+    `, [fileId, userId]);
     if (!file) throw notFound();
 
     try {
@@ -196,6 +212,7 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
         SELECT * FROM changed
       `, [fileId, ownerId, trashed]);
       if (!updated) throw new Error('Locked file could not be updated');
+      if (trashed) await manager.query('DELETE FROM file_shares WHERE file_id = $1', [fileId]);
       return { id: updated.id, trashedAt: updated.trashed_at?.toISOString() ?? null };
     });
   }
@@ -263,5 +280,5 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
     return { removed, failed };
   }
 
-  return { upload, update, download, setTrashed, listTrash, reconcile };
+  return { upload, update, get, download, setTrashed, listTrash, reconcile };
 }

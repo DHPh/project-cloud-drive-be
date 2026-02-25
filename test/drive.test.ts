@@ -46,7 +46,7 @@ test('DRIVE-01 HTTP contract and storage transitions on PostgreSQL', { skip: !te
   db.setOptions({ schema, extra: { options: '-c search_path=' + schema, statement_timeout: 10000 } });
   await db.initialize();
   t.after(async () => { await db.destroy(); });
-  assert.equal((await db.runMigrations()).length, 2);
+  assert.equal((await db.runMigrations()).length, 3);
   assert.equal((await db.runMigrations()).length, 0);
 
   const owner = randomUUID();

@@ -10,6 +10,7 @@ Từ repo backend, chạy `npm ci`, `npm run typecheck`, `npm run build` và `np
 | Hợp đồng | Đối chiếu phương thức, schema, phân trang và mã lỗi với [OpenAPI](contracts/openapi.yaml). Đồng bộ schema với frontend khi hành vi đổi. |
 | PostgreSQL và MinIO | Đối soát metadata, object và quota khi upload thành công, chạm quota, hoặc storage lỗi rồi chạy đối soát lại. |
 | TRASH-01 | Nâng cấp snapshot DRIVE-01, giữ ID/thư mục/object key/quota qua hai chiều và tải lại đúng byte. Kiểm tra quyền giữa hai tài khoản, yêu cầu lặp và việc ẩn tệp trong Drive, tìm kiếm, đổi tên và tải xuống. |
+| SHARE-01 | Dùng chủ tệp, người nhận và tài khoản ngoài phạm vi đã biết. Kiểm tra danh sách, đọc và tải xuống trước/sau khi cấp, hết hạn và thu hồi. Kiểm tra tháng ngắn, yêu cầu lặp và thu hồi toàn bộ khi vào Thùng rác. |
 | Nâng cấp dữ liệu | Chạy migration trên DB trống và snapshot tổng hợp của schema trước thay đổi khi migration có ảnh hưởng tới dữ liệu hiện có. |
 
 Ghi lệnh, kết quả thực tế, tác động API hoặc DB và phần còn chờ xác minh khi bàn giao. Khi release có migration, ghi SHA hoặc image, thứ tự migrate và deploy, kiểm tra sau deploy và phương án phục hồi PostgreSQL cùng object. Chỉ chia sẻ ảnh và log từ fixture tổng hợp.

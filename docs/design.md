@@ -1,6 +1,6 @@
 # Thiết kế backend
 
-DRIVE-01 và TRASH-01 dùng các route và DTO trong [hợp đồng HTTP](contracts/README.md).
+DRIVE-01, TRASH-01 và SHARE-01 dùng các route và DTO trong [hợp đồng HTTP](contracts/README.md).
 
 ## Phiên và quyền
 
@@ -17,6 +17,12 @@ Lỗi ghi object chuyển bản ghi sang `cleanup` nếu PostgreSQL còn sẵn s
 Migration `AddFileTrash1763683200000` bổ sung `trashed_at` cho tệp đã ghi xong. Drive, tìm kiếm, đổi tên và tải xuống chỉ sử dụng tệp có `trashed_at` bằng `NULL`. Danh sách thùng rác áp quyền chủ sở hữu trước khi đếm và phân trang.
 
 Đưa vào thùng rác và khôi phục chỉ đổi `trashed_at` trong transaction, giữ ID, thư mục, object key và quota. Gọi lặp thao tác giữ trạng thái đã đạt. Tác vụ đối soát upload chỉ xử lý tệp chưa `ready`, nên tệp đang ở thùng rác vẫn giữ nguyên nội dung.
+
+## Chia sẻ từng tệp
+
+Mỗi quyền gắn một tài khoản nhận với một tệp. Chủ tệp cấp và thu hồi quyền theo tài khoản. Thông tin và luồng tải xuống chỉ đọc tệp đang hoạt động khi người dùng là chủ tệp hoặc có quyền còn hạn. Danh sách tệp nhận được áp cùng điều kiện trước khi đếm và phân trang.
+
+Backend lưu mốc hết hạn tuyệt đối. Hạn bỏ trống khi cấp mới được tính theo một tháng lịch Việt Nam. Quyền tự hết hiệu lực tại mốc đã lưu khi backend kiểm tra request. Cấp quyền, thu hồi và đưa vào Thùng rác đồng bộ qua khóa trên bản ghi tệp. Đưa vào Thùng rác thu hồi toàn bộ quyền trong cùng giao dịch với đổi trạng thái. Restore giữ tệp riêng tư.
 
 ## Migration và kiểm thử
 

@@ -8,8 +8,9 @@ import { listFolder } from './folders';
 import { attachmentHeader, readUpload } from './multipart';
 import type { ObjectStorage } from './object-storage';
 import { createSessions } from './session';
+import { createShares } from './shares';
 import {
-  fileIdSchema, folderIdSchema, folderQuerySchema, loginSchema, paginationQuerySchema, updateFileSchema,
+  fileIdSchema, folderIdSchema, folderQuerySchema, grantFileShareSchema, loginSchema, paginationQuerySchema, updateFileSchema,
 } from './validation';
 
 function rateLimited(res: Response, retryAfter: number): never {
@@ -51,6 +52,7 @@ export function createApp(
   const json = express.json({ limit: '32kb' });
   const sessions = createSessions(db, config.sessionTtlMs, config.secureCookie);
   const files = createFiles(db, storage, config.uploadRecoveryAgeMs);
+  const shares = createShares(db);
   const limitLogin = createRateLimit(30, 900000);
   const limitUpload = createRateLimit(60, 60000);
   const maxActiveUploads = Math.max(1, Math.min(8, Math.floor((80 * 1024 * 1024) / config.maxUploadBytes)));
@@ -119,6 +121,40 @@ export function createApp(
       user.id, fileIdSchema.parse(req.params.fileId), updateFileSchema.parse(req.body)
     );
     res.json({ success: true, data: file });
+  });
+
+  api.get('/files/:fileId', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const file = await files.get(user.id, fileIdSchema.parse(req.params.fileId));
+    res.json({ success: true, data: file });
+  });
+
+  api.get('/files/:fileId/shares', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await shares.listGrants(
+      user.id, fileIdSchema.parse(req.params.fileId), paginationQuerySchema.parse(req.query)
+    );
+    res.json({ success: true, ...result });
+  });
+
+  api.put('/files/:fileId/shares', json, async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const data = await shares.grant(
+      user.id, fileIdSchema.parse(req.params.fileId), grantFileShareSchema.parse(req.body)
+    );
+    res.json({ success: true, data });
+  });
+
+  api.delete('/files/:fileId/shares/:recipientId', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    await shares.revoke(user.id, fileIdSchema.parse(req.params.fileId), fileIdSchema.parse(req.params.recipientId));
+    res.json({ success: true, data: { revoked: true } });
+  });
+
+  api.get('/shared-with-me', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await shares.listReceived(user.id, paginationQuerySchema.parse(req.query));
+    res.json({ success: true, ...result });
   });
 
   api.post('/files/:fileId/trash', async (req, res) => {

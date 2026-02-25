@@ -5,6 +5,7 @@ import { hashPassword } from './session';
 
 const demoOwner = '10000000-0000-4000-8000-000000000001';
 const viewerOwner = '10000000-0000-4000-8000-000000000002';
+const reviewerOwner = '10000000-0000-4000-8000-000000000003';
 const documents = '10000000-0000-4000-8000-000000000101';
 const projects = '10000000-0000-4000-8000-000000000102';
 const empty = '10000000-0000-4000-8000-000000000103';
@@ -18,6 +19,7 @@ export async function seedDrive(db: DataSource, storage: ObjectStorage, recovery
     for (const [id, email, name] of [
       [demoOwner, 'demo@example.test', 'Minh Anh'],
       [viewerOwner, 'viewer@example.test', 'Other Drive User'],
+      [reviewerOwner, 'reviewer@example.test', 'Drive Reviewer'],
     ]) {
       await manager.query(`
         INSERT INTO users (id, email, name, password_hash, quota_bytes)

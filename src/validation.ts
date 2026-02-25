@@ -10,8 +10,10 @@ export const folderIdSchema = z.union([z.literal('root'), fileIdSchema]).transfo
 export const fileNameSchema = z.string().min(1).max(255).refine(isFileName);
 export const mimeTypeSchema = z.string().regex(/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i).max(255);
 
+const emailSchema = z.email().max(254).transform((value) => value.toLowerCase());
+
 export const loginSchema = z.strictObject({
-  email: z.email().max(254).transform((value) => value.toLowerCase()),
+  email: emailSchema,
   password: z.string().min(1).max(1024),
 });
 
@@ -35,4 +37,15 @@ export const updateFileSchema = z.strictObject({
     .refine((tags) => tags.length === new Set(tags).size).optional(),
 }).refine((value) => Object.keys(value).length > 0);
 
+export const grantFileShareSchema = z.strictObject({
+  email: emailSchema,
+  expiresAt: z.iso.datetime({ offset: true })
+    .regex(/T\d{2}:\d{2}:\d{2}/)
+    .refine((value) => Number.isFinite(Date.parse(value)))
+    .transform((value) => new Date(value).toISOString())
+    .refine((value) => value.length === 24 && !value.startsWith('0000'))
+    .nullish(),
+});
+
 export type FileUpdate = z.infer<typeof updateFileSchema>;
+export type FileShareGrant = z.infer<typeof grantFileShareSchema>;
