@@ -6,6 +6,7 @@ const isFileName = (value: string): boolean =>
   !/[/\\\u0000-\u001F\u007F\uD800-\uDFFF]/u.test(value) && value.trim().length > 0 && value !== '.' && value !== '..';
 
 export const fileIdSchema = z.string().regex(uuidPattern);
+export const folderUuidSchema = fileIdSchema.transform((value) => value.toLowerCase());
 export const folderIdSchema = z.union([z.literal('root'), fileIdSchema]).transform((value) => value === 'root' ? null : value);
 export const fileNameSchema = z.string().min(1).max(255).refine(isFileName);
 export const mimeTypeSchema = z.string().regex(/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i).max(255);
@@ -28,7 +29,20 @@ export const paginationQuerySchema = z.strictObject({
 
 export const folderQuerySchema = paginationQuerySchema.extend({
   q: z.string().max(255).refine(isDbText).transform((value) => value.trim()).default(''),
+  type: z.enum(['all', 'folders']).default('all'),
 });
+
+const folderNameSchema = z.string().trim().min(1).refine((name) => isDbText(name) && [...name].length <= 255);
+
+export const createFolderSchema = z.strictObject({
+  name: folderNameSchema,
+  parentId: folderUuidSchema.nullish(),
+});
+
+export const updateFolderSchema = z.strictObject({
+  name: folderNameSchema.optional(),
+  parentId: folderUuidSchema.nullish(),
+}).refine(({ name, parentId }) => name !== undefined || parentId !== undefined);
 
 export const updateFileSchema = z.strictObject({
   originalName: fileNameSchema.optional(),
@@ -49,3 +63,5 @@ export const grantFileShareSchema = z.strictObject({
 
 export type FileUpdate = z.infer<typeof updateFileSchema>;
 export type FileShareGrant = z.infer<typeof grantFileShareSchema>;
+export type FolderCreate = z.infer<typeof createFolderSchema>;
+export type FolderUpdate = z.infer<typeof updateFolderSchema>;

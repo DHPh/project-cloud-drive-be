@@ -76,6 +76,7 @@ test('TRASH-01 upgrades a populated DRIVE-01 schema and preserves each file thro
   assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
     'AddFileTrash1763683200000',
     'AddFileShares1764201600000',
+    'AddFolderSiblingUniqueness1764806400000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   const readMetadata = () => db.query('SELECT to_jsonb(files) - \'trashed_at\' AS metadata FROM files ORDER BY id');

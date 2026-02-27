@@ -4,13 +4,14 @@ import type { DataSource } from 'typeorm';
 import type { appConfig } from './config';
 import { ApiError, notFound, sendError } from './errors';
 import { createFiles } from './files';
-import { listFolder } from './folders';
+import { createFolder, listFolder, updateFolder } from './folders';
 import { attachmentHeader, readUpload } from './multipart';
 import type { ObjectStorage } from './object-storage';
 import { createSessions } from './session';
 import { createShares } from './shares';
 import {
-  fileIdSchema, folderIdSchema, folderQuerySchema, grantFileShareSchema, loginSchema, paginationQuerySchema, updateFileSchema,
+  createFolderSchema, fileIdSchema, folderIdSchema, folderQuerySchema, folderUuidSchema, grantFileShareSchema,
+  loginSchema, paginationQuerySchema, updateFileSchema, updateFolderSchema,
 } from './validation';
 
 function rateLimited(res: Response, retryAfter: number): never {
@@ -100,6 +101,20 @@ export function createApp(
     const folderId = folderIdSchema.parse(req.params.folderId);
     const result = await listFolder(db, user.id, folderId, folderQuerySchema.parse(req.query));
     res.json({ success: true, ...result });
+  });
+
+  api.post('/folders', json, async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const folder = await createFolder(db, user.id, createFolderSchema.parse(req.body));
+    res.status(201).json({ success: true, data: folder });
+  });
+
+  api.patch('/folders/:folderId', json, async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const folder = await updateFolder(
+      db, user.id, folderUuidSchema.parse(req.params.folderId), updateFolderSchema.parse(req.body)
+    );
+    res.json({ success: true, data: folder });
   });
 
   api.post('/files', async (req, res) => {

@@ -24,6 +24,12 @@ Mỗi quyền gắn một tài khoản nhận với một tệp. Chủ tệp c�
 
 Backend lưu mốc hết hạn tuyệt đối. Hạn bỏ trống khi cấp mới được tính theo một tháng lịch Việt Nam. Quyền tự hết hiệu lực tại mốc đã lưu khi backend kiểm tra request. Cấp quyền, thu hồi và đưa vào Thùng rác đồng bộ qua khóa trên bản ghi tệp. Đưa vào Thùng rác thu hồi toàn bộ quyền trong cùng giao dịch với đổi trạng thái. Restore giữ tệp riêng tư.
 
+## Quản lý thư mục
+
+DRIVE-02 giữ tên chính xác phân biệt hoa thường sau khi cắt khoảng trắng hai đầu. Migration thêm unique index theo chủ, thư mục cha và tên. `NULLS NOT DISTINCT` kiểm tra cả Drive gốc. Nếu snapshot có tên trùng chính xác, migration trả lỗi và quay lui theo transaction để có thể xử lý dữ liệu trước khi chạy lại.
+
+Thao tác tạo và cập nhật cây thư mục lấy khóa transaction theo chủ sở hữu trước khi kiểm tra cha, tổ tiên và tên ở vị trí đích. Khóa cùng chủ tuần tự hóa các thao tác di chuyển đối nghịch. Backend kiểm tra đích cùng chủ và chặn vòng lặp. Đổi tên và di chuyển chỉ ghi bản ghi thư mục, giữ ID, object, quota và quyền chia sẻ tệp.
+
 ## Migration và kiểm thử
 
 Chạy migration một lần trước khi khởi động bản phát hành. Seed chỉ dành cho môi trường phát triển và tạo fixture tổng hợp trong PostgreSQL cùng object tương ứng trong bucket. Xem [cách chạy kiểm thử và quy trình phát hành](verification.md).

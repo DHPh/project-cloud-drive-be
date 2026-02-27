@@ -10,4 +10,6 @@ API dùng base path `/api/v1` và cookie phiên cùng origin. Request ghi cần 
 
 OpenAPI `0.3.0` bổ sung SHARE-01. Chủ tệp quản lý quyền ở `/files/{fileId}/shares`. Người được cấp quyền còn hạn thấy tệp trong `/shared-with-me` và có thể đọc thông tin, tải xuống. `expiresAt` được trả về với thời điểm hết hạn thực tế. Bỏ trống khi cấp mới mặc định một tháng theo lịch Việt Nam. Gọi lại khi quyền đang hoạt động giữ thời hạn hiện tại nếu vẫn bỏ trống. Thu hồi quyền hoặc đưa tệp vào Thùng rác cắt quyền ngay. Khôi phục tệp về trạng thái riêng tư.
 
+OpenAPI `0.4.0` bổ sung DRIVE-02. `POST /folders` tạo thư mục. `PATCH /folders/{folderId}` đổi tên hoặc di chuyển, với `parentId: null` là Drive gốc. `GET /folders/{folderId}/contents?type=folders` lọc thư mục trước khi đếm và phân trang. API trả `409 FOLDER_NAME_CONFLICT` khi tên trùng chính xác trong cùng vị trí và `409 INVALID_FOLDER_MOVE` khi đích là chính thư mục hoặc một thư mục con.
+
 Khi mất kết nối trước khi nhận phản hồi upload, làm mới danh sách để đối soát kết quả trước khi gửi lại. Khi đổi API, cập nhật schema và kiểm tra request, response và dữ liệu thật trong môi trường tổng hợp.

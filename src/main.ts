@@ -22,7 +22,8 @@ async function main(): Promise<void> {
         AND to_regclass('folders') IS NOT NULL AND EXISTS (
           SELECT 1 FROM pg_attribute
           WHERE attrelid = to_regclass('files') AND attname = 'trashed_at' AND NOT attisdropped
-        ) AND to_regclass('file_shares') IS NOT NULL AS exists
+        ) AND to_regclass('file_shares') IS NOT NULL
+          AND to_regclass('folders_sibling_name_unique') IS NOT NULL AS exists
     `);
     if (!schema?.exists) {
       console.error('Database schema missing. Run the migration command before starting.');
