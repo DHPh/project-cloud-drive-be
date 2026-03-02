@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DataSource, QueryRunner } from 'typeorm';
 import { ApiError, notFound, reportFailure, storageUnavailable } from './errors';
+import { lockFolderTree, requireOwnedFolder } from './folder-tree';
 import type { Upload } from './multipart';
 import type { ObjectStorage } from './object-storage';
 import type { FileUpdate } from './validation';
@@ -17,7 +18,7 @@ export type FileRow = {
   updated_at: Date | string;
 };
 
-type TrashStateRow = { id: string; trashed_at: Date | null };
+type TrashStateRow = { id: string; folder_id: string | null; trashed_at: Date | null };
 type TrashedFileRow = FileRow & { trashed_at: string };
 
 export function fileSummary(file: FileRow) {
@@ -42,6 +43,10 @@ const fileReadAccess = `
     owner_id = $2 OR EXISTS (
       SELECT 1 FROM file_shares
       WHERE file_id = files.id AND recipient_id = $2 AND expires_at > statement_timestamp()
+    ) OR EXISTS (
+      SELECT 1 FROM drive_folder_ancestors(files.folder_id, files.owner_id) a
+      JOIN folder_shares s ON s.folder_id = a.folder_id
+      WHERE s.recipient_id = $2 AND s.expires_at > statement_timestamp()
     )
   )
 `;
@@ -151,20 +156,30 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
   }
 
   async function update(ownerId: string, fileId: string, input: FileUpdate) {
-    const [file] = await db.query<FileRow[]>(`
-      WITH changed AS (
-        UPDATE files SET
-          original_name = COALESCE($3::text, original_name),
-          description = CASE WHEN $4::boolean THEN $5::text ELSE description END,
-          tags = COALESCE($6::text[], tags),
-          updated_at = now()
-        WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready' AND trashed_at IS NULL
-        RETURNING ${fileFields}
-      )
-      SELECT * FROM changed
-    `, [fileId, ownerId, input.originalName ?? null, 'description' in input, input.description ?? null, input.tags ?? null]);
-    if (!file) throw notFound();
-    return fileSummary(file);
+    return db.transaction('READ COMMITTED', async (manager) => {
+      if (input.folderId !== undefined) {
+        await lockFolderTree(manager, ownerId);
+        if (input.folderId !== null) await requireOwnedFolder(manager, ownerId, input.folderId);
+      }
+      const [file] = await manager.query<FileRow[]>(`
+        WITH changed AS (
+          UPDATE files SET
+            original_name = COALESCE($3::text, original_name),
+            description = CASE WHEN $4::boolean THEN $5::text ELSE description END,
+            tags = COALESCE($6::text[], tags),
+            folder_id = CASE WHEN $7::boolean THEN $8::uuid ELSE folder_id END,
+            updated_at = statement_timestamp()
+          WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready' AND trashed_at IS NULL
+          RETURNING ${fileFields}
+        )
+        SELECT * FROM changed
+      `, [
+        fileId, ownerId, input.originalName ?? null, 'description' in input, input.description ?? null,
+        input.tags ?? null, input.folderId !== undefined, input.folderId ?? null,
+      ]);
+      if (!file) throw notFound();
+      return fileSummary(file);
+    });
   }
 
   async function get(userId: string, fileId: string) {
@@ -191,29 +206,36 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
   }
 
   async function setTrashed(ownerId: string, fileId: string, trashed: boolean) {
-    return db.transaction(async (manager) => {
+    return db.transaction('READ COMMITTED', async (manager) => {
+      if (!trashed) await lockFolderTree(manager, ownerId);
       const [file] = await manager.query<TrashStateRow[]>(`
-        SELECT id, trashed_at FROM files
+        SELECT id, folder_id, trashed_at FROM files
         WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready'
         FOR UPDATE
       `, [fileId, ownerId]);
       if (!file) throw notFound();
 
       if ((file.trashed_at !== null) === trashed) {
-        return { id: file.id, trashedAt: file.trashed_at?.toISOString() ?? null };
+        return { id: file.id, folderId: file.folder_id, trashedAt: file.trashed_at?.toISOString() ?? null };
       }
 
       const [updated] = await manager.query<TrashStateRow[]>(`
         WITH changed AS (
-          UPDATE files SET trashed_at = CASE WHEN $3::boolean THEN statement_timestamp() ELSE NULL END
+          UPDATE files SET
+            trashed_at = CASE WHEN $3::boolean THEN statement_timestamp() ELSE NULL END,
+            folder_id = CASE WHEN NOT $3::boolean AND EXISTS (
+              SELECT 1 FROM drive_folder_ancestors(files.folder_id, files.owner_id) a
+              JOIN folder_shares s ON s.folder_id = a.folder_id
+              WHERE s.expires_at > statement_timestamp()
+            ) THEN NULL ELSE folder_id END
           WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready'
-          RETURNING id, trashed_at
+          RETURNING id, folder_id, trashed_at
         )
         SELECT * FROM changed
       `, [fileId, ownerId, trashed]);
       if (!updated) throw new Error('Locked file could not be updated');
       if (trashed) await manager.query('DELETE FROM file_shares WHERE file_id = $1', [fileId]);
-      return { id: updated.id, trashedAt: updated.trashed_at?.toISOString() ?? null };
+      return { id: updated.id, folderId: updated.folder_id, trashedAt: updated.trashed_at?.toISOString() ?? null };
     });
   }
 

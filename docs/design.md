@@ -16,7 +16,7 @@ Lỗi ghi object chuyển bản ghi sang `cleanup` nếu PostgreSQL còn sẵn s
 
 Migration `AddFileTrash1763683200000` bổ sung `trashed_at` cho tệp đã ghi xong. Drive, tìm kiếm, đổi tên và tải xuống chỉ sử dụng tệp có `trashed_at` bằng `NULL`. Danh sách thùng rác áp quyền chủ sở hữu trước khi đếm và phân trang.
 
-Đưa vào thùng rác và khôi phục chỉ đổi `trashed_at` trong transaction, giữ ID, thư mục, object key và quota. Gọi lặp thao tác giữ trạng thái đã đạt. Tác vụ đối soát upload chỉ xử lý tệp chưa `ready`, nên tệp đang ở thùng rác vẫn giữ nguyên nội dung.
+Đưa vào thùng rác và khôi phục đổi `trashed_at` trong transaction, giữ ID, object key và quota. Đích khôi phục được xác định theo [quyền thư mục](#kế-thừa-quyền-thư-mục). Gọi lặp thao tác giữ trạng thái đã đạt. Tác vụ đối soát upload chỉ xử lý tệp chưa `ready`, nên tệp đang ở thùng rác vẫn giữ nguyên nội dung.
 
 ## Chia sẻ từng tệp
 
@@ -29,6 +29,14 @@ Backend lưu mốc hết hạn tuyệt đối. Hạn bỏ trống khi cấp mớ
 DRIVE-02 giữ tên chính xác phân biệt hoa thường sau khi cắt khoảng trắng hai đầu. Migration thêm unique index theo chủ, thư mục cha và tên. `NULLS NOT DISTINCT` kiểm tra cả Drive gốc. Nếu snapshot có tên trùng chính xác, migration trả lỗi và quay lui theo transaction để có thể xử lý dữ liệu trước khi chạy lại.
 
 Thao tác tạo và cập nhật cây thư mục lấy khóa transaction theo chủ sở hữu trước khi kiểm tra cha, tổ tiên và tên ở vị trí đích. Khóa cùng chủ tuần tự hóa các thao tác di chuyển đối nghịch. Backend kiểm tra đích cùng chủ và chặn vòng lặp. Đổi tên và di chuyển chỉ ghi bản ghi thư mục, giữ ID, object, quota và quyền chia sẻ tệp.
+
+## Kế thừa quyền thư mục
+
+Quyền xem được tính từ quyền trực tiếp và các quyền thư mục còn hạn trên chuỗi tổ tiên hiện tại. Phiên người nhận chỉ duyệt được các phần thuộc cây đã cấp quyền. Breadcrumb và cha của thư mục trong phản hồi được giới hạn theo phạm vi đó. Drive gốc chỉ thuộc chủ. Các thao tác ghi giữ kiểm tra quyền sở hữu.
+
+Khôi phục tệp kiểm tra quyền còn hạn trên thư mục gốc và các thư mục cha. Nếu vị trí đó đang chia sẻ, cập nhật đích về Drive gốc để tệp trở lại riêng tư. Cấp/thu hồi quyền thư mục, đổi cây và khôi phục dùng chung khóa giao dịch theo chủ sở hữu. File ID, object key và quota giữ nguyên.
+
+Triển khai migration, API rồi frontend tương thích theo thứ tự. Khi đã có dữ liệu `folder_shares`, giữ quy tắc khôi phục riêng tư của API `0.5.0` trong phương án quay lui.
 
 ## Migration và kiểm thử
 

@@ -49,6 +49,7 @@ export const updateFileSchema = z.strictObject({
   description: z.string().max(2000).refine(isDbText).nullable().optional(),
   tags: z.array(z.string().min(1).max(64).refine(isDbText)).max(20)
     .refine((tags) => tags.length === new Set(tags).size).optional(),
+  folderId: folderUuidSchema.nullish(),
 }).refine((value) => Object.keys(value).length > 0);
 
 export const grantFileShareSchema = z.strictObject({

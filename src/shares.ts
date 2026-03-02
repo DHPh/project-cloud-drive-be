@@ -1,6 +1,7 @@
 import type { DataSource, EntityManager } from 'typeorm';
 import { ApiError, invalidRequest, notFound } from './errors';
 import { fileFields, fileSummary, type FileRow } from './files';
+import { lockFolderTree } from './folder-tree';
 import type { FileShareGrant } from './validation';
 
 type Page = { page: number; limit: number };
@@ -13,6 +14,14 @@ type GrantRow = {
   is_active: boolean;
 };
 type SharedFileRow = FileRow & { owner_name: string; granted_at: string; expires_at: string };
+type SharedFolderRow = {
+  id: string; name: string; owner_name: string; granted_at: string; expires_at: string;
+};
+
+const shareTargets = {
+  file: { resource: 'files', grants: 'file_shares', key: 'file_id', active: " AND upload_state = 'ready' AND trashed_at IS NULL" },
+  folder: { resource: 'folders', grants: 'folder_shares', key: 'folder_id', active: '' },
+} as const;
 
 const sharedFileFields = fileFields.split(', ').map((field) => 'f.' + field).join(', ');
 
@@ -27,20 +36,21 @@ function grantSummary(grant: GrantRow) {
   };
 }
 
-async function lockOwnedFile(manager: EntityManager, ownerId: string, fileId: string) {
-  // Trash and share mutations lock the same file row before modifying grants.
-  const [file] = await manager.query<{ id: string }[]>(`
-    SELECT id FROM files
-    WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready' AND trashed_at IS NULL
-    FOR UPDATE
-  `, [fileId, ownerId]);
-  if (!file) throw notFound();
-}
+export function createShareAdministration(db: DataSource, kind: keyof typeof shareTargets) {
+  const { resource, grants, key, active } = shareTargets[kind];
 
-export function createShares(db: DataSource) {
-  async function grant(ownerId: string, fileId: string, input: FileShareGrant) {
-    return db.transaction(async (manager) => {
-      await lockOwnedFile(manager, ownerId, fileId);
+  async function lockOwnedResource(manager: EntityManager, ownerId: string, resourceId: string) {
+    if (kind === 'folder') await lockFolderTree(manager, ownerId);
+    // For files, this is the same row that Trash locks before revoking grants.
+    const [owned] = await manager.query<{ id: string }[]>(`
+      SELECT id FROM ${resource} WHERE id = $1 AND owner_id = $2${active} FOR UPDATE
+    `, [resourceId, ownerId]);
+    if (!owned) throw notFound();
+  }
+
+  async function grant(ownerId: string, resourceId: string, input: FileShareGrant) {
+    return db.transaction('READ COMMITTED', async (manager) => {
+      await lockOwnedResource(manager, ownerId, resourceId);
       const [recipient] = await manager.query<{ id: string }[]>(
         'SELECT id FROM users WHERE email = $1', [input.email]
       );
@@ -53,51 +63,51 @@ export function createShares(db: DataSource) {
         WITH grant_time AS (
           SELECT date_trunc('milliseconds', statement_timestamp()) AS issued_at
         ), saved AS (
-          INSERT INTO file_shares (file_id, recipient_id, granted_at, expires_at)
+          INSERT INTO ${grants} (${key}, recipient_id, granted_at, expires_at)
           SELECT $1, $2, issued_at, COALESCE($3::timestamptz, default_file_share_expiry(issued_at))
           FROM grant_time
           WHERE $3::timestamptz IS NULL OR $3::timestamptz > statement_timestamp()
-          ON CONFLICT (file_id, recipient_id) DO UPDATE SET
-            granted_at = CASE WHEN file_shares.expires_at > statement_timestamp()
-              THEN file_shares.granted_at ELSE EXCLUDED.granted_at END,
-            expires_at = CASE WHEN $3::timestamptz IS NULL AND file_shares.expires_at > statement_timestamp()
-              THEN file_shares.expires_at ELSE EXCLUDED.expires_at END
+          ON CONFLICT (${key}, recipient_id) DO UPDATE SET
+            granted_at = CASE WHEN ${grants}.expires_at > statement_timestamp()
+              THEN ${grants}.granted_at ELSE EXCLUDED.granted_at END,
+            expires_at = CASE WHEN $3::timestamptz IS NULL AND ${grants}.expires_at > statement_timestamp()
+              THEN ${grants}.expires_at ELSE EXCLUDED.expires_at END
           RETURNING recipient_id, granted_at, expires_at
         )
         SELECT saved.*, u.email AS recipient_email, u.name AS recipient_name,
           saved.expires_at > statement_timestamp() AS is_active
         FROM saved JOIN users u ON u.id = saved.recipient_id
-      `, [fileId, recipient.id, input.expiresAt ?? null]);
+      `, [resourceId, recipient.id, input.expiresAt ?? null]);
       if (!grant) throw invalidRequest();
       return grantSummary(grant);
     });
   }
 
-  async function revoke(ownerId: string, fileId: string, recipientId: string) {
-    await db.transaction(async (manager) => {
-      await lockOwnedFile(manager, ownerId, fileId);
+  async function revoke(ownerId: string, resourceId: string, recipientId: string) {
+    await db.transaction('READ COMMITTED', async (manager) => {
+      await lockOwnedResource(manager, ownerId, resourceId);
       await manager.query(
-        'DELETE FROM file_shares WHERE file_id = $1 AND recipient_id = $2', [fileId, recipientId]
+        `DELETE FROM ${grants} WHERE ${key} = $1 AND recipient_id = $2`, [resourceId, recipientId]
       );
     });
   }
 
-  async function listGrants(ownerId: string, fileId: string, { page, limit }: Page) {
+  async function listGrants(ownerId: string, resourceId: string, { page, limit }: Page) {
     const offset = (BigInt(page - 1) * BigInt(limit)).toString();
-    const [result] = await db.query<{ owns_file: boolean; total: string; items: GrantRow[] }[]>(`
-      WITH owned_file AS (
-        SELECT id FROM files WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready' AND trashed_at IS NULL
+    const [result] = await db.query<{ owns_resource: boolean; total: string; items: GrantRow[] }[]>(`
+      WITH owned_resource AS (
+        SELECT id FROM ${resource} WHERE id = $1 AND owner_id = $2${active}
       ), matching AS NOT MATERIALIZED (
         SELECT s.recipient_id, u.email AS recipient_email, u.name AS recipient_name, s.granted_at, s.expires_at,
           s.expires_at > statement_timestamp() AS is_active
-        FROM owned_file f JOIN file_shares s ON s.file_id = f.id JOIN users u ON u.id = s.recipient_id
+        FROM owned_resource r JOIN ${grants} s ON s.${key} = r.id JOIN users u ON u.id = s.recipient_id
       ), page_items AS (
         SELECT * FROM matching ORDER BY granted_at DESC, recipient_id LIMIT $3 OFFSET $4::bigint
       )
-      SELECT EXISTS (SELECT 1 FROM owned_file) AS owns_file, (SELECT count(*) FROM matching) AS total,
+      SELECT EXISTS (SELECT 1 FROM owned_resource) AS owns_resource, (SELECT count(*) FROM matching) AS total,
         COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY granted_at DESC, recipient_id) FROM page_items p), '[]') AS items
-    `, [fileId, ownerId, limit, offset]);
-    if (!result?.owns_file) throw notFound();
+    `, [resourceId, ownerId, limit, offset]);
+    if (!result?.owns_resource) throw notFound();
     const total = Number(result.total);
     return {
       data: { items: result.items.map(grantSummary) },
@@ -105,34 +115,64 @@ export function createShares(db: DataSource) {
     };
   }
 
-  async function listReceived(recipientId: string, { page, limit }: Page) {
-    const offset = (BigInt(page - 1) * BigInt(limit)).toString();
-    const [result] = await db.query<{ total: string; items: SharedFileRow[] }[]>(`
-      WITH matching AS NOT MATERIALIZED (
-        SELECT ${sharedFileFields}, u.name AS owner_name, s.granted_at, s.expires_at
-        FROM file_shares s JOIN files f ON f.id = s.file_id JOIN users u ON u.id = f.owner_id
-        WHERE s.recipient_id = $1 AND s.expires_at > statement_timestamp()
-          AND f.upload_state = 'ready' AND f.trashed_at IS NULL
-      ), page_items AS (
-        SELECT * FROM matching ORDER BY granted_at DESC, id LIMIT $2 OFFSET $3::bigint
-      )
-      SELECT (SELECT count(*) FROM matching) AS total,
-        COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY granted_at DESC, id) FROM page_items p), '[]') AS items
-    `, [recipientId, limit, offset]);
-    if (!result) throw new Error('Shared files query returned no summary');
-    const total = Number(result.total);
-    return {
-      data: {
-        items: result.items.map((file) => ({
-          ...fileSummary(file),
-          ownerName: file.owner_name,
-          sharedAt: new Date(file.granted_at).toISOString(),
-          expiresAt: new Date(file.expires_at).toISOString(),
-        })),
-      },
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    };
-  }
+  return { grant, revoke, listGrants };
+}
 
-  return { grant, revoke, listGrants, listReceived };
+export async function listSharedFiles(db: DataSource, recipientId: string, { page, limit }: Page) {
+  const offset = (BigInt(page - 1) * BigInt(limit)).toString();
+  const [result] = await db.query<{ total: string; items: SharedFileRow[] }[]>(`
+    WITH matching AS NOT MATERIALIZED (
+      SELECT ${sharedFileFields}, u.name AS owner_name, s.granted_at, s.expires_at
+      FROM file_shares s JOIN files f ON f.id = s.file_id JOIN users u ON u.id = f.owner_id
+      WHERE s.recipient_id = $1 AND s.expires_at > statement_timestamp()
+        AND f.upload_state = 'ready' AND f.trashed_at IS NULL
+    ), page_items AS (
+      SELECT * FROM matching ORDER BY granted_at DESC, id LIMIT $2 OFFSET $3::bigint
+    )
+    SELECT (SELECT count(*) FROM matching) AS total,
+      COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY granted_at DESC, id) FROM page_items p), '[]') AS items
+  `, [recipientId, limit, offset]);
+  if (!result) throw new Error('Shared files query returned no summary');
+  const total = Number(result.total);
+  return {
+    data: {
+      items: result.items.map((file) => ({
+        ...fileSummary(file),
+        ownerName: file.owner_name,
+        sharedAt: new Date(file.granted_at).toISOString(),
+        expiresAt: new Date(file.expires_at).toISOString(),
+      })),
+    },
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+}
+
+export async function listSharedFolders(db: DataSource, recipientId: string, { page, limit }: Page) {
+  const offset = (BigInt(page - 1) * BigInt(limit)).toString();
+  const [result] = await db.query<{ total: string; items: SharedFolderRow[] }[]>(`
+    WITH matching AS NOT MATERIALIZED (
+      SELECT f.id, f.name, u.name AS owner_name, s.granted_at, s.expires_at
+      FROM folder_shares s JOIN folders f ON f.id = s.folder_id JOIN users u ON u.id = f.owner_id
+      WHERE s.recipient_id = $1 AND s.expires_at > statement_timestamp()
+    ), page_items AS (
+      SELECT * FROM matching ORDER BY granted_at DESC, id LIMIT $2 OFFSET $3::bigint
+    )
+    SELECT (SELECT count(*) FROM matching) AS total,
+      COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY granted_at DESC, id) FROM page_items p), '[]') AS items
+  `, [recipientId, limit, offset]);
+  if (!result) throw new Error('Shared folders query returned no summary');
+  const total = Number(result.total);
+  return {
+    data: {
+      items: result.items.map((folder) => ({
+        kind: 'folder' as const,
+        id: folder.id,
+        name: folder.name,
+        ownerName: folder.owner_name,
+        sharedAt: new Date(folder.granted_at).toISOString(),
+        expiresAt: new Date(folder.expires_at).toISOString(),
+      })),
+    },
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
 }

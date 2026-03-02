@@ -8,7 +8,7 @@ import { createFolder, listFolder, updateFolder } from './folders';
 import { attachmentHeader, readUpload } from './multipart';
 import type { ObjectStorage } from './object-storage';
 import { createSessions } from './session';
-import { createShares } from './shares';
+import { createShareAdministration, listSharedFiles, listSharedFolders } from './shares';
 import {
   createFolderSchema, fileIdSchema, folderIdSchema, folderQuerySchema, folderUuidSchema, grantFileShareSchema,
   loginSchema, paginationQuerySchema, updateFileSchema, updateFolderSchema,
@@ -53,7 +53,8 @@ export function createApp(
   const json = express.json({ limit: '32kb' });
   const sessions = createSessions(db, config.sessionTtlMs, config.secureCookie);
   const files = createFiles(db, storage, config.uploadRecoveryAgeMs);
-  const shares = createShares(db);
+  const shares = createShareAdministration(db, 'file');
+  const folderShares = createShareAdministration(db, 'folder');
   const limitLogin = createRateLimit(30, 900000);
   const limitUpload = createRateLimit(60, 60000);
   const maxActiveUploads = Math.max(1, Math.min(8, Math.floor((80 * 1024 * 1024) / config.maxUploadBytes)));
@@ -117,6 +118,36 @@ export function createApp(
     res.json({ success: true, data: folder });
   });
 
+  api.get('/folders/:folderId/shares', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await folderShares.listGrants(
+      user.id, folderUuidSchema.parse(req.params.folderId), paginationQuerySchema.parse(req.query)
+    );
+    res.json({ success: true, ...result });
+  });
+
+  api.put('/folders/:folderId/shares', json, async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const data = await folderShares.grant(
+      user.id, folderUuidSchema.parse(req.params.folderId), grantFileShareSchema.parse(req.body)
+    );
+    res.json({ success: true, data });
+  });
+
+  api.delete('/folders/:folderId/shares/:recipientId', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    await folderShares.revoke(
+      user.id, folderUuidSchema.parse(req.params.folderId), fileIdSchema.parse(req.params.recipientId)
+    );
+    res.json({ success: true, data: { revoked: true } });
+  });
+
+  api.get('/shared-folders', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await listSharedFolders(db, user.id, paginationQuerySchema.parse(req.query));
+    res.json({ success: true, ...result });
+  });
+
   api.post('/files', async (req, res) => {
     const user = await sessions.currentUser(req);
     if (activeUploads >= maxActiveUploads) rateLimited(res, 1);
@@ -168,7 +199,7 @@ export function createApp(
 
   api.get('/shared-with-me', async (req, res) => {
     const user = await sessions.currentUser(req);
-    const result = await shares.listReceived(user.id, paginationQuerySchema.parse(req.query));
+    const result = await listSharedFiles(db, user.id, paginationQuerySchema.parse(req.query));
     res.json({ success: true, ...result });
   });
 

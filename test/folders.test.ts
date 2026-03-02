@@ -85,6 +85,7 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
   await db.initialize();
   assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
     'AddFolderSiblingUniqueness1764806400000',
+    'AddFolderShares1765152000000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'), snapshotFolders);

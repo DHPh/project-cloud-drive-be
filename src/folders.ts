@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { QueryFailedError, type DataSource, type EntityManager } from 'typeorm';
 import { ApiError, notFound } from './errors';
 import { fileSummary, type FileRow } from './files';
+import { lockFolderTree, requireOwnedFolder } from './folder-tree';
 import type { FolderCreate, FolderUpdate } from './validation';
 
 type FolderRow = {
@@ -32,8 +33,7 @@ async function writeFolder(
 ) {
   try {
     return await db.transaction('READ COMMITTED', async (manager) => {
-      // Every topology write locks the owner's tree before reading any parent links.
-      await manager.query("SELECT pg_advisory_xact_lock(hashtextextended('folder-tree:' || $1::uuid::text, 0))", [ownerId]);
+      await lockFolderTree(manager, ownerId);
       const folder = await change(manager);
       if (!folder) throw new Error('Folder write did not return a row');
       return folderSummary(folder);
@@ -51,12 +51,7 @@ async function writeFolder(
 
 export function createFolder(db: DataSource, ownerId: string, { name, parentId = null }: FolderCreate) {
   return writeFolder(db, ownerId, async (manager) => {
-    if (parentId !== null) {
-      const [parent] = await manager.query<{ id: string }[]>(
-        'SELECT id FROM folders WHERE id = $1 AND owner_id = $2', [parentId, ownerId]
-      );
-      if (!parent) throw notFound();
-    }
+    if (parentId !== null) await requireOwnedFolder(manager, ownerId, parentId);
 
     const [created] = await manager.query<FolderRow[]>(`
       INSERT INTO folders (id, name, parent_id, owner_id)
@@ -108,54 +103,67 @@ export function updateFolder(db: DataSource, ownerId: string, folderId: string, 
 }
 
 export async function listFolder(
-  db: DataSource, ownerId: string, folderId: string | null,
+  db: DataSource, userId: string, folderId: string | null,
   options: { page: number; limit: number; q: string; type: 'all' | 'folders' }
 ) {
-  let ancestors: FolderRow[] = [];
-  if (folderId !== null) {
-    ancestors = await db.query<FolderRow[]>(`
-      WITH RECURSIVE ancestors AS (
-        SELECT id, name, parent_id, created_at, updated_at, ARRAY[id] AS visited
-        FROM folders WHERE id = $1 AND owner_id = $2
-        UNION ALL
-        SELECT f.id, f.name, f.parent_id, f.created_at, f.updated_at, a.visited || f.id
-        FROM ancestors a JOIN folders f ON f.id = a.parent_id AND f.owner_id = $2
-        WHERE NOT f.id = ANY(a.visited)
-      )
-      SELECT id, name, parent_id, created_at, updated_at
-      FROM ancestors ORDER BY cardinality(visited) DESC
-    `, [folderId, ownerId]);
-    if (!ancestors.length) throw notFound();
-  }
-
   const { page, limit, q, type } = options;
   const offset = (BigInt(page - 1) * BigInt(limit)).toString();
-  const [results] = await db.query<{ total: string; items: ListedRow[] }[]>(`
-    WITH direct_children AS (
+  const [results] = await db.query<{
+    access: 'owner' | 'viewer' | null; ancestors: FolderRow[]; total: string; items: ListedRow[];
+  }[]>(`
+    WITH current_folder AS (
+      SELECT id, owner_id FROM folders WHERE id = $2::uuid
+    ), ancestors AS (
+      SELECT f.id, f.name, f.parent_id, f.created_at, f.updated_at, a.distance
+      FROM current_folder target
+      CROSS JOIN LATERAL drive_folder_ancestors(target.id, target.owner_id) a
+      JOIN folders f ON f.id = a.folder_id
+    ), scope AS (
+      SELECT 'owner' AS access, $1::uuid AS owner_id, NULL::integer AS boundary WHERE $2::uuid IS NULL
+      UNION ALL
+      SELECT 'owner', owner_id, NULL FROM current_folder WHERE owner_id = $1
+      UNION ALL
+      SELECT 'viewer', target.owner_id, max(a.distance)
+      FROM current_folder target CROSS JOIN ancestors a
+      JOIN folder_shares s ON s.folder_id = a.id
+      WHERE target.owner_id <> $1 AND s.recipient_id = $1 AND s.expires_at > statement_timestamp()
+      GROUP BY target.owner_id
+    ), direct_children AS (
       SELECT id, 0 AS sort_kind, name, parent_id, NULL::text AS original_name, NULL::uuid AS folder_id,
         NULL::text AS mime_type, NULL::bigint AS size_bytes, NULL::text AS description, NULL::text[] AS tags,
         created_at, updated_at
-      FROM folders WHERE owner_id = $1 AND parent_id IS NOT DISTINCT FROM $2::uuid
+      FROM folders
+      WHERE owner_id = (SELECT owner_id FROM scope) AND parent_id IS NOT DISTINCT FROM $2::uuid
       UNION ALL
       SELECT id, 1, original_name, NULL, original_name, folder_id, mime_type, size_bytes, description, tags,
         created_at, updated_at
-      FROM files WHERE owner_id = $1 AND folder_id IS NOT DISTINCT FROM $2::uuid
+      FROM files
+      WHERE owner_id = (SELECT owner_id FROM scope) AND folder_id IS NOT DISTINCT FROM $2::uuid
         AND upload_state = 'ready' AND trashed_at IS NULL AND $6 = 'all'
     ), matching AS (
       SELECT * FROM direct_children WHERE $3 = '' OR strpos(lower(name), lower($3)) > 0
     ), page_items AS (
       SELECT * FROM matching ORDER BY sort_kind, lower(name), id LIMIT $4 OFFSET $5::bigint
     )
-    SELECT (SELECT count(*) FROM matching) AS total,
+    SELECT (SELECT access FROM scope) AS access,
+      COALESCE((
+        SELECT jsonb_agg(to_jsonb(a) ORDER BY a.distance DESC)
+        FROM ancestors a CROSS JOIN scope s
+        WHERE s.access = 'owner' OR a.distance <= s.boundary
+      ), '[]') AS ancestors, (SELECT count(*) FROM matching) AS total,
       COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY sort_kind, lower(name), id) FROM page_items p), '[]') AS items
-  `, [ownerId, folderId, q, limit, offset, type]);
-  if (!results) throw new Error('Folder contents query returned no summary');
+  `, [userId, folderId, q, limit, offset, type]);
+  if (!results?.access) throw notFound();
 
+  const { access, ancestors } = results;
   const current = ancestors.at(-1);
+  const folder = current ? folderSummary(current) : null;
+  if (folder && access === 'viewer' && ancestors.length === 1) folder.parentId = null;
   const total = Number(results.total);
   return {
     data: {
-      folder: current ? folderSummary(current) : null,
+      access,
+      folder,
       breadcrumbs: ancestors.map(({ id, name }) => ({ id, name })),
       items: results.items.map((row) => row.sort_kind === 0 ? folderSummary(row) : fileSummary(row)),
     },

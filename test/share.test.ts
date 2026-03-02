@@ -70,6 +70,7 @@ test('SHARE-01 limits file reads to active shares and clears grants atomically o
   assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
     'AddFileShares1764201600000',
     'AddFolderSiblingUniqueness1764806400000',
+    'AddFolderShares1765152000000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   const calendarEnds = await db.query<{ expires_at: Date }[]>(`
