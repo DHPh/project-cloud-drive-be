@@ -77,7 +77,7 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
     VALUES ($1, $2, statement_timestamp(), statement_timestamp() + INTERVAL '7 days')
   `, [fileId, recipientId]);
   const snapshotFiles = await previous.query('SELECT * FROM files ORDER BY id');
-  const snapshotFolders = await previous.query('SELECT * FROM folders ORDER BY id');
+  const snapshotFolders = await previous.query<Record<string, unknown>[]>('SELECT * FROM folders ORDER BY id');
   const snapshotShares = await previous.query('SELECT * FROM file_shares');
   const snapshotQuota = await previous.query('SELECT id, used_bytes, quota_bytes FROM users ORDER BY id');
   await previous.destroy();
@@ -86,9 +86,11 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
   assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
     'AddFolderSiblingUniqueness1764806400000',
     'AddFolderShares1765152000000',
+    'AddFolderTrash1765238400000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
-  assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'), snapshotFolders);
+  assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'),
+    snapshotFolders.map((folder) => ({ ...folder, trash_root_id: null, trashed_at: null })));
   let storageReads = 0;
   const storage: ObjectStorage = {
     async read(key) {

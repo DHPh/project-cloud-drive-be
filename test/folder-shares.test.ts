@@ -7,7 +7,6 @@ import test from 'node:test';
 import { createApp } from '../src/app';
 import { appConfig } from '../src/config';
 import { createDatabase } from '../src/database';
-import { AddFolderShares1765152000000 } from '../src/migrations/1765152000000-AddFolderShares';
 import type { ObjectStorage } from '../src/object-storage';
 import { hashPassword } from '../src/session';
 
@@ -22,7 +21,7 @@ test('SHARE-02 interprets live ancestor grants and restores files privately', { 
   const migrations = db.options.migrations;
   assert.ok(Array.isArray(migrations));
   const previous = createDatabase(testDatabase!).setOptions({
-    ...schemaOptions, migrations: migrations.filter((migration) => migration !== AddFolderShares1765152000000),
+    ...schemaOptions, migrations: migrations.slice(0, 4),
   });
   let server: ReturnType<typeof createServer> | undefined;
   t.after(async () => {
@@ -82,7 +81,10 @@ test('SHARE-02 interprets live ancestor grants and restores files privately', { 
   await previous.destroy();
 
   await db.initialize();
-  assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), ['AddFolderShares1765152000000']);
+  assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
+    'AddFolderShares1765152000000',
+    'AddFolderTrash1765238400000',
+  ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM files ORDER BY id'), originalFiles);
   let storageReads = 0;
@@ -233,7 +235,7 @@ test('SHARE-02 interprets live ancestor grants and restores files privately', { 
   assert.equal((await json(await trash(directFileId), 200)).data.folderId, childId);
   await json(await read(directFileId, viewer), 404);
   assert.deepEqual((await json(await restore(directFileId), 200)).data, {
-    id: directFileId, folderId: null, trashedAt: null,
+    id: directFileId, folderId: null, originalName: fileName, trashedAt: null,
   });
   await json(await read(directFileId, viewer), 404);
   assert.deepEqual((await json(await request('/shared-with-me', viewer), 200)).data.items, []);

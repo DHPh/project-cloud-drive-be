@@ -5,7 +5,7 @@ import { fileSummary, type FileRow } from './files';
 import { lockFolderTree, requireOwnedFolder } from './folder-tree';
 import type { FolderCreate, FolderUpdate } from './validation';
 
-type FolderRow = {
+export type FolderRow = {
   id: string;
   name: string;
   parent_id: string | null;
@@ -13,7 +13,7 @@ type FolderRow = {
   updated_at: Date | string;
 };
 
-function folderSummary(folder: FolderRow) {
+export function folderSummary(folder: FolderRow) {
   return {
     kind: 'folder' as const,
     id: folder.id,
@@ -26,7 +26,7 @@ function folderSummary(folder: FolderRow) {
 
 type ListedRow = (FolderRow & { sort_kind: 0 }) | (FileRow & { sort_kind: 1 });
 
-const folderFields = 'id, name, parent_id, created_at, updated_at';
+export const folderFields = 'id, name, parent_id, created_at, updated_at';
 
 async function writeFolder(
   db: DataSource, ownerId: string, change: (manager: EntityManager) => Promise<FolderRow | undefined>
@@ -64,7 +64,8 @@ export function createFolder(db: DataSource, ownerId: string, { name, parentId =
 export function updateFolder(db: DataSource, ownerId: string, folderId: string, input: FolderUpdate) {
   return writeFolder(db, ownerId, async (manager) => {
     const [current] = await manager.query<FolderRow[]>(
-      `SELECT ${folderFields} FROM folders WHERE id = $1 AND owner_id = $2`, [folderId, ownerId]
+      `SELECT ${folderFields} FROM folders WHERE id = $1 AND owner_id = $2 AND trash_root_id IS NULL`,
+      [folderId, ownerId]
     );
     if (!current) throw notFound();
 
@@ -76,7 +77,7 @@ export function updateFolder(db: DataSource, ownerId: string, folderId: string, 
       const [target] = await manager.query<{ exists: boolean; cycle: boolean }[]>(`
         WITH RECURSIVE ancestors AS (
           SELECT id, parent_id, ARRAY[id] AS visited, false AS cycle
-          FROM folders WHERE id = $1 AND owner_id = $2
+          FROM folders WHERE id = $1 AND owner_id = $2 AND trash_root_id IS NULL
           UNION ALL
           SELECT f.id, f.parent_id, a.visited || f.id, f.id = ANY(a.visited)
           FROM ancestors a JOIN folders f ON f.id = a.parent_id AND f.owner_id = $2
@@ -112,7 +113,7 @@ export async function listFolder(
     access: 'owner' | 'viewer' | null; ancestors: FolderRow[]; total: string; items: ListedRow[];
   }[]>(`
     WITH current_folder AS (
-      SELECT id, owner_id FROM folders WHERE id = $2::uuid
+      SELECT id, owner_id FROM folders WHERE id = $2::uuid AND trash_root_id IS NULL
     ), ancestors AS (
       SELECT f.id, f.name, f.parent_id, f.created_at, f.updated_at, a.distance
       FROM current_folder target
@@ -134,6 +135,7 @@ export async function listFolder(
         created_at, updated_at
       FROM folders
       WHERE owner_id = (SELECT owner_id FROM scope) AND parent_id IS NOT DISTINCT FROM $2::uuid
+        AND trash_root_id IS NULL
       UNION ALL
       SELECT id, 1, original_name, NULL, original_name, folder_id, mime_type, size_bytes, description, tags,
         created_at, updated_at

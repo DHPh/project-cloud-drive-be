@@ -1,7 +1,7 @@
 import type { DataSource, EntityManager } from 'typeorm';
 import { ApiError, invalidRequest, notFound } from './errors';
 import { fileFields, fileSummary, type FileRow } from './files';
-import { lockFolderTree } from './folder-tree';
+import { fileParentIsActive, lockFolderTree } from './folder-tree';
 import type { FileShareGrant } from './validation';
 
 type Page = { page: number; limit: number };
@@ -19,8 +19,11 @@ type SharedFolderRow = {
 };
 
 const shareTargets = {
-  file: { resource: 'files', grants: 'file_shares', key: 'file_id', active: " AND upload_state = 'ready' AND trashed_at IS NULL" },
-  folder: { resource: 'folders', grants: 'folder_shares', key: 'folder_id', active: '' },
+  file: {
+    resource: 'files', grants: 'file_shares', key: 'file_id',
+    active: ` AND upload_state = 'ready' AND trashed_at IS NULL AND ${fileParentIsActive()}`,
+  },
+  folder: { resource: 'folders', grants: 'folder_shares', key: 'folder_id', active: ' AND trash_root_id IS NULL' },
 } as const;
 
 const sharedFileFields = fileFields.split(', ').map((field) => 'f.' + field).join(', ');
@@ -40,8 +43,7 @@ export function createShareAdministration(db: DataSource, kind: keyof typeof sha
   const { resource, grants, key, active } = shareTargets[kind];
 
   async function lockOwnedResource(manager: EntityManager, ownerId: string, resourceId: string) {
-    if (kind === 'folder') await lockFolderTree(manager, ownerId);
-    // For files, this is the same row that Trash locks before revoking grants.
+    await lockFolderTree(manager, ownerId);
     const [owned] = await manager.query<{ id: string }[]>(`
       SELECT id FROM ${resource} WHERE id = $1 AND owner_id = $2${active} FOR UPDATE
     `, [resourceId, ownerId]);
@@ -125,7 +127,7 @@ export async function listSharedFiles(db: DataSource, recipientId: string, { pag
       SELECT ${sharedFileFields}, u.name AS owner_name, s.granted_at, s.expires_at
       FROM file_shares s JOIN files f ON f.id = s.file_id JOIN users u ON u.id = f.owner_id
       WHERE s.recipient_id = $1 AND s.expires_at > statement_timestamp()
-        AND f.upload_state = 'ready' AND f.trashed_at IS NULL
+        AND f.upload_state = 'ready' AND f.trashed_at IS NULL AND ${fileParentIsActive('f')}
     ), page_items AS (
       SELECT * FROM matching ORDER BY granted_at DESC, id LIMIT $2 OFFSET $3::bigint
     )
@@ -153,7 +155,7 @@ export async function listSharedFolders(db: DataSource, recipientId: string, { p
     WITH matching AS NOT MATERIALIZED (
       SELECT f.id, f.name, u.name AS owner_name, s.granted_at, s.expires_at
       FROM folder_shares s JOIN folders f ON f.id = s.folder_id JOIN users u ON u.id = f.owner_id
-      WHERE s.recipient_id = $1 AND s.expires_at > statement_timestamp()
+      WHERE s.recipient_id = $1 AND s.expires_at > statement_timestamp() AND f.trash_root_id IS NULL
     ), page_items AS (
       SELECT * FROM matching ORDER BY granted_at DESC, id LIMIT $2 OFFSET $3::bigint
     )

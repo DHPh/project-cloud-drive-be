@@ -9,9 +9,10 @@ import { attachmentHeader, readUpload } from './multipart';
 import type { ObjectStorage } from './object-storage';
 import { createSessions } from './session';
 import { createShareAdministration, listSharedFiles, listSharedFolders } from './shares';
+import { listTrash, setFileTrashed, setFolderTrashed } from './trash';
 import {
   createFolderSchema, fileIdSchema, folderIdSchema, folderQuerySchema, folderUuidSchema, grantFileShareSchema,
-  loginSchema, paginationQuerySchema, updateFileSchema, updateFolderSchema,
+  loginSchema, paginationQuerySchema, trashQuerySchema, updateFileSchema, updateFolderSchema,
 } from './validation';
 
 function rateLimited(res: Response, retryAfter: number): never {
@@ -118,6 +119,18 @@ export function createApp(
     res.json({ success: true, data: folder });
   });
 
+  api.post('/folders/:folderId/trash', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const data = await setFolderTrashed(db, user.id, folderUuidSchema.parse(req.params.folderId), true);
+    res.json({ success: true, data });
+  });
+
+  api.post('/folders/:folderId/restore', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const data = await setFolderTrashed(db, user.id, folderUuidSchema.parse(req.params.folderId), false);
+    res.json({ success: true, data });
+  });
+
   api.get('/folders/:folderId/shares', async (req, res) => {
     const user = await sessions.currentUser(req);
     const result = await folderShares.listGrants(
@@ -205,19 +218,19 @@ export function createApp(
 
   api.post('/files/:fileId/trash', async (req, res) => {
     const user = await sessions.currentUser(req);
-    const data = await files.setTrashed(user.id, fileIdSchema.parse(req.params.fileId), true);
+    const data = await setFileTrashed(db, user.id, fileIdSchema.parse(req.params.fileId), true);
     res.json({ success: true, data });
   });
 
   api.post('/files/:fileId/restore', async (req, res) => {
     const user = await sessions.currentUser(req);
-    const data = await files.setTrashed(user.id, fileIdSchema.parse(req.params.fileId), false);
+    const data = await setFileTrashed(db, user.id, fileIdSchema.parse(req.params.fileId), false);
     res.json({ success: true, data });
   });
 
   api.get('/trash', async (req, res) => {
     const user = await sessions.currentUser(req);
-    const result = await files.listTrash(user.id, paginationQuerySchema.parse(req.query));
+    const result = await listTrash(db, user.id, trashQuerySchema.parse(req.query));
     res.json({ success: true, ...result });
   });
 

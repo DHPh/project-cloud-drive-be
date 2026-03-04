@@ -27,6 +27,10 @@ export const paginationQuerySchema = z.strictObject({
   limit: positiveInteger(100).default(20),
 });
 
+export const trashQuerySchema = paginationQuerySchema.extend({
+  includeFolders: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+});
+
 export const folderQuerySchema = paginationQuerySchema.extend({
   q: z.string().max(255).refine(isDbText).transform((value) => value.trim()).default(''),
   type: z.enum(['all', 'folders']).default('all'),

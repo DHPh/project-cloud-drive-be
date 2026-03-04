@@ -78,6 +78,7 @@ test('TRASH-01 upgrades a populated DRIVE-01 schema and preserves each file thro
     'AddFileShares1764201600000',
     'AddFolderSiblingUniqueness1764806400000',
     'AddFolderShares1765152000000',
+    'AddFolderTrash1765238400000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   const readMetadata = () => db.query('SELECT to_jsonb(files) - \'trashed_at\' AS metadata FROM files ORDER BY id');
@@ -165,7 +166,7 @@ test('TRASH-01 upgrades a populated DRIVE-01 schema and preserves each file thro
     await json(await change(randomUUID(), action, cookie), 404);
   }
   assert.deepEqual(await json(await change(primary, 'restore', cookie), 200), {
-    success: true, data: { id: primary, folderId: folder, trashedAt: null },
+    success: true, data: { id: primary, folderId: folder, originalName: 'Kế hoạch.txt', trashedAt: null },
   });
 
   const drivePath = '/folders/' + folder + '/contents';
@@ -225,7 +226,7 @@ test('TRASH-01 upgrades a populated DRIVE-01 schema and preserves each file thro
   ]);
   for (const response of restoreResponses) {
     assert.deepEqual(await json(response, 200), {
-      success: true, data: { id: primary, folderId: folder, trashedAt: null },
+      success: true, data: { id: primary, folderId: folder, originalName: 'Kế hoạch.txt', trashedAt: null },
     });
   }
   const restored = await json(await request(drivePath + '?q=K%E1%BA%BF', cookie), 200);

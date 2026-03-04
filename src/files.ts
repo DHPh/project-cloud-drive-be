@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DataSource, QueryRunner } from 'typeorm';
 import { ApiError, notFound, reportFailure, storageUnavailable } from './errors';
-import { lockFolderTree, requireOwnedFolder } from './folder-tree';
+import { fileParentIsActive, lockFolderTree, requireOwnedFolder } from './folder-tree';
 import type { Upload } from './multipart';
 import type { ObjectStorage } from './object-storage';
 import type { FileUpdate } from './validation';
@@ -17,9 +17,6 @@ export type FileRow = {
   created_at: Date | string;
   updated_at: Date | string;
 };
-
-type TrashStateRow = { id: string; folder_id: string | null; trashed_at: Date | null };
-type TrashedFileRow = FileRow & { trashed_at: string };
 
 export function fileSummary(file: FileRow) {
   return {
@@ -39,7 +36,7 @@ export function fileSummary(file: FileRow) {
 export const fileFields = 'id, original_name, folder_id, mime_type, size_bytes, description, tags, created_at, updated_at';
 
 const fileReadAccess = `
-  id = $1 AND upload_state = 'ready' AND trashed_at IS NULL AND (
+  id = $1 AND upload_state = 'ready' AND trashed_at IS NULL AND ${fileParentIsActive()} AND (
     owner_id = $2 OR EXISTS (
       SELECT 1 FROM file_shares
       WHERE file_id = files.id AND recipient_id = $2 AND expires_at > statement_timestamp()
@@ -93,12 +90,8 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
 
       await runner.startTransaction();
       try {
-        if (input.folderId !== null) {
-          const matches = await runner.query(
-            'SELECT id FROM folders WHERE id = $1 AND owner_id = $2', [input.folderId, ownerId]
-          ) as { id: string }[];
-          if (!matches.length) throw notFound();
-        }
+        await lockFolderTree(runner.manager, ownerId);
+        if (input.folderId !== null) await requireOwnedFolder(runner.manager, ownerId, input.folderId);
 
         const reserved = await runner.query(`
           WITH reservation AS (
@@ -157,10 +150,8 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
 
   async function update(ownerId: string, fileId: string, input: FileUpdate) {
     return db.transaction('READ COMMITTED', async (manager) => {
-      if (input.folderId !== undefined) {
-        await lockFolderTree(manager, ownerId);
-        if (input.folderId !== null) await requireOwnedFolder(manager, ownerId, input.folderId);
-      }
+      await lockFolderTree(manager, ownerId);
+      if (input.folderId) await requireOwnedFolder(manager, ownerId, input.folderId);
       const [file] = await manager.query<FileRow[]>(`
         WITH changed AS (
           UPDATE files SET
@@ -170,6 +161,7 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
             folder_id = CASE WHEN $7::boolean THEN $8::uuid ELSE folder_id END,
             updated_at = statement_timestamp()
           WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready' AND trashed_at IS NULL
+            AND ${fileParentIsActive()}
           RETURNING ${fileFields}
         )
         SELECT * FROM changed
@@ -203,63 +195,6 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
       reportFailure('File download failed in object storage', error);
       throw storageUnavailable();
     }
-  }
-
-  async function setTrashed(ownerId: string, fileId: string, trashed: boolean) {
-    return db.transaction('READ COMMITTED', async (manager) => {
-      if (!trashed) await lockFolderTree(manager, ownerId);
-      const [file] = await manager.query<TrashStateRow[]>(`
-        SELECT id, folder_id, trashed_at FROM files
-        WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready'
-        FOR UPDATE
-      `, [fileId, ownerId]);
-      if (!file) throw notFound();
-
-      if ((file.trashed_at !== null) === trashed) {
-        return { id: file.id, folderId: file.folder_id, trashedAt: file.trashed_at?.toISOString() ?? null };
-      }
-
-      const [updated] = await manager.query<TrashStateRow[]>(`
-        WITH changed AS (
-          UPDATE files SET
-            trashed_at = CASE WHEN $3::boolean THEN statement_timestamp() ELSE NULL END,
-            folder_id = CASE WHEN NOT $3::boolean AND EXISTS (
-              SELECT 1 FROM drive_folder_ancestors(files.folder_id, files.owner_id) a
-              JOIN folder_shares s ON s.folder_id = a.folder_id
-              WHERE s.expires_at > statement_timestamp()
-            ) THEN NULL ELSE folder_id END
-          WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready'
-          RETURNING id, folder_id, trashed_at
-        )
-        SELECT * FROM changed
-      `, [fileId, ownerId, trashed]);
-      if (!updated) throw new Error('Locked file could not be updated');
-      if (trashed) await manager.query('DELETE FROM file_shares WHERE file_id = $1', [fileId]);
-      return { id: updated.id, folderId: updated.folder_id, trashedAt: updated.trashed_at?.toISOString() ?? null };
-    });
-  }
-
-  async function listTrash(ownerId: string, { page, limit }: { page: number; limit: number }) {
-    const offset = (BigInt(page - 1) * BigInt(limit)).toString();
-    const [result] = await db.query<{ total: string; items: TrashedFileRow[] }[]>(`
-      WITH matching AS NOT MATERIALIZED (
-        SELECT ${fileFields}, trashed_at FROM files
-        WHERE owner_id = $1 AND upload_state = 'ready' AND trashed_at IS NOT NULL
-      ), page_items AS (
-        SELECT * FROM matching ORDER BY trashed_at DESC, id LIMIT $2 OFFSET $3::bigint
-      )
-      SELECT (SELECT count(*) FROM matching) AS total,
-        COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY trashed_at DESC, id) FROM page_items p), '[]') AS items
-    `, [ownerId, limit, offset]);
-    if (!result) throw new Error('Trash query returned no summary');
-
-    const total = Number(result.total);
-    return {
-      data: {
-        items: result.items.map((file) => ({ ...fileSummary(file), trashedAt: new Date(file.trashed_at).toISOString() })),
-      },
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-    };
   }
 
   async function reconcile(signal?: AbortSignal): Promise<{ removed: number; failed: number }> {
@@ -302,5 +237,5 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
     return { removed, failed };
   }
 
-  return { upload, update, get, download, setTrashed, listTrash, reconcile };
+  return { upload, update, get, download, reconcile };
 }

@@ -1,10 +1,10 @@
 # Thiết kế backend
 
-DRIVE-01, TRASH-01 và SHARE-01 dùng các route và DTO trong [hợp đồng HTTP](contracts/README.md).
+Drive, Thùng rác và chia sẻ dùng các route và DTO trong [hợp đồng HTTP](contracts/README.md).
 
 ## Phiên và quyền
 
-Cookie phiên là giá trị ngẫu nhiên. PostgreSQL lưu SHA-256 của giá trị ấy cùng hạn dùng. API kiểm tra thời hạn trên từng request, yêu cầu `Origin` khớp `APP_ORIGIN` khi ghi và yêu cầu cookie `Secure` ở cấu hình production. Lượt tải và duyệt chỉ đọc tài nguyên thuộc chủ sở hữu hiện tại. JSON trả theo DTO và phản hồi tệp dùng `Cache-Control: private, no-store`.
+Cookie phiên là giá trị ngẫu nhiên. PostgreSQL lưu SHA-256 của giá trị ấy cùng hạn dùng. API kiểm tra thời hạn trên từng request, yêu cầu `Origin` khớp `APP_ORIGIN` khi ghi và yêu cầu cookie `Secure` ở cấu hình production. Lượt tải và duyệt kiểm tra quyền chủ sở hữu hoặc quyền đọc chia sẻ đang hiệu lực. JSON trả theo DTO và phản hồi tệp dùng `Cache-Control: private, no-store`.
 
 ## Vòng đời upload
 
@@ -18,6 +18,12 @@ Migration `AddFileTrash1763683200000` bổ sung `trashed_at` cho tệp đã ghi 
 
 Đưa vào thùng rác và khôi phục đổi `trashed_at` trong transaction, giữ ID, object key và quota. Đích khôi phục được xác định theo [quyền thư mục](#kế-thừa-quyền-thư-mục). Gọi lặp thao tác giữ trạng thái đã đạt. Tác vụ đối soát upload chỉ xử lý tệp chưa `ready`, nên tệp đang ở thùng rác vẫn giữ nguyên nội dung.
 
+## Thùng rác cả cây thư mục
+
+Migration `AddFolderTrash1765238400000` bổ sung `trash_root_id` cho mọi thư mục cùng lần xóa và `trashed_at` trên thư mục gốc của lần xóa. Tệp trực thuộc thư mục trong Thùng rác bị ẩn theo trạng thái thư mục. Tệp và thư mục đã xóa riêng giữ mục Thùng rác riêng. Mọi quyền trực tiếp trong cây vừa xóa bị thu hồi trong cùng transaction. Đọc, tải, ghi, chia sẻ và liệt kê đều kiểm tra trạng thái trước khi lấy dữ liệu hoặc đếm kết quả.
+
+Cây khôi phục về cha cũ nếu còn hoạt động và riêng tư, hoặc Drive gốc. Tệp xóa riêng dùng cùng quy tắc. Nếu đã có mục hoạt động cùng loại và tên chính xác ở đích, khôi phục với tên còn trống dùng hậu tố ` - khôi phục` rồi tăng số khi cần. Với tệp, hậu tố nằm trước phần mở rộng cuối. Kiểm tra trạng thái, đích và tên trong transaction dưới khóa cùng chủ. Trả tên và đích thực tế để giao diện dùng ngay sau thao tác.
+
 ## Chia sẻ từng tệp
 
 Mỗi quyền gắn một tài khoản nhận với một tệp. Chủ tệp cấp và thu hồi quyền theo tài khoản. Thông tin và luồng tải xuống chỉ đọc tệp đang hoạt động khi người dùng là chủ tệp hoặc có quyền còn hạn. Danh sách tệp nhận được áp cùng điều kiện trước khi đếm và phân trang.
@@ -26,7 +32,7 @@ Backend lưu mốc hết hạn tuyệt đối. Hạn bỏ trống khi cấp mớ
 
 ## Quản lý thư mục
 
-DRIVE-02 giữ tên chính xác phân biệt hoa thường sau khi cắt khoảng trắng hai đầu. Migration thêm unique index theo chủ, thư mục cha và tên. `NULLS NOT DISTINCT` kiểm tra cả Drive gốc. Nếu snapshot có tên trùng chính xác, migration trả lỗi và quay lui theo transaction để có thể xử lý dữ liệu trước khi chạy lại.
+DRIVE-02 giữ tên chính xác phân biệt hoa thường sau khi cắt khoảng trắng hai đầu. Unique index kiểm tra theo chủ, thư mục cha và tên của thư mục đang hoạt động. `NULLS NOT DISTINCT` kiểm tra cả Drive gốc. TRASH-02 cho phép dùng lại tên của thư mục đã xóa.
 
 Thao tác tạo và cập nhật cây thư mục lấy khóa transaction theo chủ sở hữu trước khi kiểm tra cha, tổ tiên và tên ở vị trí đích. Khóa cùng chủ tuần tự hóa các thao tác di chuyển đối nghịch. Backend kiểm tra đích cùng chủ và chặn vòng lặp. Đổi tên và di chuyển chỉ ghi bản ghi thư mục, giữ ID, object, quota và quyền chia sẻ tệp.
 
@@ -36,7 +42,7 @@ Quyền xem được tính từ quyền trực tiếp và các quyền thư mụ
 
 Khôi phục tệp kiểm tra quyền còn hạn trên thư mục gốc và các thư mục cha. Nếu vị trí đó đang chia sẻ, cập nhật đích về Drive gốc để tệp trở lại riêng tư. Cấp/thu hồi quyền thư mục, đổi cây và khôi phục dùng chung khóa giao dịch theo chủ sở hữu. File ID, object key và quota giữ nguyên.
 
-Triển khai migration, API rồi frontend tương thích theo thứ tự. Khi đã có dữ liệu `folder_shares`, giữ quy tắc khôi phục riêng tư của API `0.5.0` trong phương án quay lui.
+Triển khai migration, API rồi frontend theo thứ tự. Frontend cũ tiếp tục nhận danh sách tệp xóa riêng khi gọi `GET /trash` theo hợp đồng cũ. Sau khi đã đưa thư mục vào Thùng rác, phương án quay lui cần API hiểu trạng thái này hoặc phục hồi đồng bộ PostgreSQL và MinIO trước khi mở lại dịch vụ. Migration từ chối quay lui schema khi vẫn còn thư mục ở Thùng rác.
 
 ## Migration và kiểm thử
 
