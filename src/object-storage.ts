@@ -54,10 +54,11 @@ export function createObjectStorage(config: ReturnType<typeof storageConfig>) {
     },
 
     async remove(key: string): Promise<void> {
-      await client.send(
+      const result = await client.send(
         new DeleteObjectCommand({ Bucket: config.bucket, Key: key }),
         { abortSignal: AbortSignal.timeout(requestTimeoutMs) }
       );
+      if (result.DeleteMarker) throw new Error('Object storage created a delete marker instead of removing the object');
     },
 
     async ensureDevelopmentBucket(): Promise<void> {

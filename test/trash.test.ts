@@ -79,14 +79,17 @@ test('TRASH-01 upgrades a populated DRIVE-01 schema and preserves each file thro
     'AddFolderSiblingUniqueness1764806400000',
     'AddFolderShares1765152000000',
     'AddFolderTrash1765238400000',
+    'AddTrashPurge1765324800000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
-  const readMetadata = () => db.query('SELECT to_jsonb(files) - \'trashed_at\' AS metadata FROM files ORDER BY id');
+  const readMetadata = () => db.query(`
+    SELECT to_jsonb(files) - 'trashed_at' - 'trash_event_id' AS metadata FROM files ORDER BY id
+  `);
   const initialMetadata = await readMetadata();
   const addedColumn = await db.query<{ trashed_at: Date | null }[]>('SELECT trashed_at FROM files');
   assert.deepEqual(addedColumn, legacyFiles.map(() => ({ trashed_at: null })));
   const migratedFiles = await db.query<Record<string, unknown>[]>('SELECT * FROM files ORDER BY id');
-  assert.deepEqual(migratedFiles, legacyFiles.map((file) => ({ ...file, trashed_at: null })));
+  assert.deepEqual(migratedFiles, legacyFiles.map((file) => ({ ...file, trashed_at: null, trash_event_id: null })));
 
   let readCount = 0;
   let writes = 0;
@@ -151,7 +154,9 @@ test('TRASH-01 upgrades a populated DRIVE-01 schema and preserves each file thro
   const otherCookie = await signIn('other@example.test');
   const emptyTrash = await list(cookie);
   assert.deepEqual(emptyTrash, {
-    success: true, data: { items: [] }, pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
+    success: true,
+    data: { items: [], summary: { remainingBytes: 0, recoverableCount: 0, purgingCount: 0, retryingCount: 0 } },
+    pagination: { page: 1, limit: 20, total: 0, totalPages: 0 },
   });
 
   await json(await request('/trash'), 401);
@@ -195,9 +200,12 @@ test('TRASH-01 upgrades a populated DRIVE-01 schema and preserves each file thro
     body: JSON.stringify({ originalName: 'Unavailable.txt' }),
   }), 404);
   assert.equal(readCount, 0);
-  assert.deepEqual((await list(cookie)).data.items, [{
+  const [trashedFile] = (await list(cookie)).data.items;
+  assert.match(trashedFile.trashEventId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(trashedFile, {
     ...initialSearch.data.items[0], trashedAt: first.data.trashedAt,
-  }]);
+    trashEventId: trashedFile.trashEventId, deleteAfter: null, purgeStatus: 'available',
+  });
 
   await json(await change(otherFile, 'trash', otherCookie), 200);
   assert.deepEqual((await list(otherCookie)).data.items.map((file: { id: string }) => file.id), [otherFile]);

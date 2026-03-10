@@ -6,6 +6,7 @@ import { AddFileShares1764201600000 } from './migrations/1764201600000-AddFileSh
 import { AddFolderSiblingUniqueness1764806400000 } from './migrations/1764806400000-AddFolderSiblingUniqueness';
 import { AddFolderShares1765152000000 } from './migrations/1765152000000-AddFolderShares';
 import { AddFolderTrash1765238400000 } from './migrations/1765238400000-AddFolderTrash';
+import { AddTrashPurge1765324800000 } from './migrations/1765324800000-AddTrashPurge';
 
 export function createDatabase(url: string): DataSource {
   return new DataSource({
@@ -20,6 +21,7 @@ export function createDatabase(url: string): DataSource {
       AddFolderSiblingUniqueness1764806400000,
       AddFolderShares1765152000000,
       AddFolderTrash1765238400000,
+      AddTrashPurge1765324800000,
     ],
     extra: { connectionTimeoutMillis: 5000, statement_timeout: 10000 },
   });

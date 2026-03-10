@@ -48,7 +48,7 @@ const fileReadAccess = `
   )
 `;
 
-async function withUploadLock<T>(
+export async function withFileObjectLock<T>(
   db: DataSource, id: string, wait: boolean, work: (runner: QueryRunner) => Promise<T>
 ): Promise<T | undefined> {
   const runner = db.createQueryRunner();
@@ -78,7 +78,7 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
   async function upload(ownerId: string, input: Upload, fixtureId?: string) {
     const id = fixtureId ?? randomUUID();
     const objectKey = 'files/' + id;
-    const summary = await withUploadLock(db, id, true, async (runner) => {
+    const summary = await withFileObjectLock(db, id, true, async (runner) => {
       if (fixtureId) {
         const [existing] = await runner.query(
           'SELECT ' + fileFields + ', upload_state FROM files WHERE id = $1 AND owner_id = $2',
@@ -201,6 +201,7 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
     const cutoff = new Date(Date.now() - recoveryAgeMs);
     const candidates = await db.query<{ id: string }[]>(`
       SELECT id FROM files WHERE upload_state <> 'ready' AND updated_at < $1
+        AND NOT EXISTS (SELECT 1 FROM trash_purge_files queued WHERE queued.file_id = files.id)
       ORDER BY updated_at, id LIMIT 25
     `, [cutoff]);
 
@@ -209,9 +210,10 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
     for (const { id } of candidates) {
       if (signal?.aborted) break;
       try {
-        const cleaned = await withUploadLock(db, id, false, async (runner) => {
+        const cleaned = await withFileObjectLock(db, id, false, async (runner) => {
           const [file] = await runner.query(
-            "SELECT object_key FROM files WHERE id = $1 AND upload_state <> 'ready' AND updated_at < $2",
+            `SELECT object_key FROM files WHERE id = $1 AND upload_state <> 'ready' AND updated_at < $2
+              AND NOT EXISTS (SELECT 1 FROM trash_purge_files queued WHERE queued.file_id = files.id)`,
             [id, cutoff]
           ) as { object_key: string }[];
           if (!file) return false;

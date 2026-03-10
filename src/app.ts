@@ -10,9 +10,11 @@ import type { ObjectStorage } from './object-storage';
 import { createSessions } from './session';
 import { createShareAdministration, listSharedFiles, listSharedFolders } from './shares';
 import { listTrash, setFileTrashed, setFolderTrashed } from './trash';
+import { emptyTrash, purgeTrashItem } from './trash-purge';
 import {
-  createFolderSchema, fileIdSchema, folderIdSchema, folderQuerySchema, folderUuidSchema, grantFileShareSchema,
-  loginSchema, paginationQuerySchema, trashQuerySchema, updateFileSchema, updateFolderSchema,
+  createFolderSchema, emptyTrashSchema, fileIdSchema, folderIdSchema, folderQuerySchema, folderUuidSchema,
+  grantFileShareSchema, loginSchema, paginationQuerySchema, trashEventSchema, trashKindSchema, trashQuerySchema,
+  updateFileSchema, updateFolderSchema,
 } from './validation';
 
 function rateLimited(res: Response, retryAfter: number): never {
@@ -125,9 +127,10 @@ export function createApp(
     res.json({ success: true, data });
   });
 
-  api.post('/folders/:folderId/restore', async (req, res) => {
+  api.post('/folders/:folderId/restore', json, async (req, res) => {
     const user = await sessions.currentUser(req);
-    const data = await setFolderTrashed(db, user.id, folderUuidSchema.parse(req.params.folderId), false);
+    const event = trashEventSchema.optional().parse(req.body);
+    const data = await setFolderTrashed(db, user.id, folderUuidSchema.parse(req.params.folderId), false, event?.trashEventId);
     res.json({ success: true, data });
   });
 
@@ -222,9 +225,10 @@ export function createApp(
     res.json({ success: true, data });
   });
 
-  api.post('/files/:fileId/restore', async (req, res) => {
+  api.post('/files/:fileId/restore', json, async (req, res) => {
     const user = await sessions.currentUser(req);
-    const data = await setFileTrashed(db, user.id, fileIdSchema.parse(req.params.fileId), false);
+    const event = trashEventSchema.optional().parse(req.body);
+    const data = await setFileTrashed(db, user.id, fileIdSchema.parse(req.params.fileId), false, event?.trashEventId);
     res.json({ success: true, data });
   });
 
@@ -232,6 +236,22 @@ export function createApp(
     const user = await sessions.currentUser(req);
     const result = await listTrash(db, user.id, trashQuerySchema.parse(req.query));
     res.json({ success: true, ...result });
+  });
+
+  api.post('/trash/:kind/:itemId/purge', json, async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const kind = trashKindSchema.parse(req.params.kind);
+    const itemId = folderUuidSchema.parse(req.params.itemId);
+    const { trashEventId } = trashEventSchema.parse(req.body);
+    const data = await purgeTrashItem(db, user.id, kind, itemId, trashEventId);
+    res.status(202).json({ success: true, data });
+  });
+
+  api.post('/trash/empty', json, async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const { requestId } = emptyTrashSchema.parse(req.body);
+    const data = await emptyTrash(db, user.id, requestId);
+    res.status(202).json({ success: true, data });
   });
 
   api.get('/files/:fileId/download', async (req, res) => {

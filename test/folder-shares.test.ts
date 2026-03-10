@@ -76,7 +76,7 @@ test('SHARE-02 interprets live ancestor grants and restores files privately', { 
       VALUES ($1,$2,$3,$4,'text/plain',$5,$6,'ready')
     `, [id, ownerId, childId, name, bytes.length, 'files/' + id]);
   }
-  const originalFiles = await previous.query('SELECT * FROM files ORDER BY id');
+  const originalFiles = await previous.query<Record<string, unknown>[]>('SELECT * FROM files ORDER BY id');
   const originalQuota = await previous.query('SELECT id, used_bytes, quota_bytes FROM users ORDER BY id');
   await previous.destroy();
 
@@ -84,9 +84,11 @@ test('SHARE-02 interprets live ancestor grants and restores files privately', { 
   assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
     'AddFolderShares1765152000000',
     'AddFolderTrash1765238400000',
+    'AddTrashPurge1765324800000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
-  assert.deepEqual(await db.query('SELECT * FROM files ORDER BY id'), originalFiles);
+  assert.deepEqual(await db.query('SELECT * FROM files ORDER BY id'),
+    originalFiles.map((file) => ({ ...file, trash_event_id: null })));
   let storageReads = 0;
   const storage: ObjectStorage = {
     async read(key) {

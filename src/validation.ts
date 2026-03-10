@@ -31,6 +31,10 @@ export const trashQuerySchema = paginationQuerySchema.extend({
   includeFolders: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
 });
 
+export const trashKindSchema = z.enum(['file', 'folder']);
+export const trashEventSchema = z.strictObject({ trashEventId: folderUuidSchema });
+export const emptyTrashSchema = z.strictObject({ requestId: folderUuidSchema });
+
 export const folderQuerySchema = paginationQuerySchema.extend({
   q: z.string().max(255).refine(isDbText).transform((value) => value.trim()).default(''),
   type: z.enum(['all', 'folders']).default('all'),

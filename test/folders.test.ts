@@ -76,7 +76,7 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
     INSERT INTO file_shares (file_id, recipient_id, granted_at, expires_at)
     VALUES ($1, $2, statement_timestamp(), statement_timestamp() + INTERVAL '7 days')
   `, [fileId, recipientId]);
-  const snapshotFiles = await previous.query('SELECT * FROM files ORDER BY id');
+  const snapshotFiles = await previous.query<Record<string, unknown>[]>('SELECT * FROM files ORDER BY id');
   const snapshotFolders = await previous.query<Record<string, unknown>[]>('SELECT * FROM folders ORDER BY id');
   const snapshotShares = await previous.query('SELECT * FROM file_shares');
   const snapshotQuota = await previous.query('SELECT id, used_bytes, quota_bytes FROM users ORDER BY id');
@@ -87,10 +87,11 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
     'AddFolderSiblingUniqueness1764806400000',
     'AddFolderShares1765152000000',
     'AddFolderTrash1765238400000',
+    'AddTrashPurge1765324800000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'),
-    snapshotFolders.map((folder) => ({ ...folder, trash_root_id: null, trashed_at: null })));
+    snapshotFolders.map((folder) => ({ ...folder, trash_root_id: null, trashed_at: null, trash_event_id: null })));
   let storageReads = 0;
   const storage: ObjectStorage = {
     async read(key) {
@@ -216,7 +217,8 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
   const topology = await db.query<{ parent_id: string | null }[]>('SELECT parent_id FROM folders WHERE id IN ($1, $2)', [a.id, b.id]);
   assert.equal(topology.filter(({ parent_id }) => parent_id === null).length, 1);
 
-  assert.deepEqual(await db.query('SELECT * FROM files ORDER BY id'), snapshotFiles);
+  assert.deepEqual(await db.query('SELECT * FROM files ORDER BY id'),
+    snapshotFiles.map((file) => ({ ...file, trash_event_id: null })));
   assert.deepEqual(await db.query('SELECT * FROM file_shares'), snapshotShares);
   assert.deepEqual(await db.query('SELECT id, used_bytes, quota_bytes FROM users ORDER BY id'), snapshotQuota);
 });

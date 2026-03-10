@@ -14,6 +14,7 @@ Từ repo backend, chạy `npm ci`, `npm run typecheck`, `npm run build` và `np
 | DRIVE-02 | Kiểm tra tạo, đổi tên, di chuyển và lọc thư mục trong danh sách. Dùng snapshot SHARE-01 và dữ liệu tổng hợp để xác minh trùng tên, quyền đích, thao tác di chuyển đối nghịch, ID và quyền tải xuống giữ nguyên. |
 | SHARE-02 | Kiểm tra quyền đọc qua tổ tiên, giới hạn breadcrumb, quyền trực tiếp song song, hết hạn, thay đổi vị trí và khôi phục riêng tư. So sánh đích khôi phục, ID, quota và byte trên tệp mẫu. |
 | TRASH-02 | Nâng cấp snapshot `0.5.0`, xác nhận danh sách tệp cũ và phân trang hỗn hợp, ẩn cả cây, thu hồi quyền, giữ mục đã xóa riêng, khôi phục riêng tư và đổi tên khi trùng. Đối soát trạng thái sau thao tác đồng thời, quota, object key và byte. |
+| TRASH-03 | Nâng cấp snapshot `0.6.0`, kiểm tra hạn 720 giờ, quyền và ID lần xóa, phạm vi khi dọn cả cây hoặc toàn bộ, lỗi storage, lỗi ghi nhận của PostgreSQL, upload đang chạy và retry. Với MinIO thật, xác nhận object thuộc lần xóa đã biến mất và quota khớp với mục giữ lại. |
 | Nâng cấp dữ liệu | Chạy migration trên DB trống và snapshot tổng hợp của schema trước thay đổi khi migration có ảnh hưởng tới dữ liệu hiện có. |
 
 Ghi lệnh, kết quả thực tế, tác động API hoặc DB và phần còn chờ xác minh khi bàn giao. Khi release có migration, ghi SHA hoặc image, thứ tự migrate và deploy, kiểm tra sau deploy và phương án phục hồi PostgreSQL cùng object. Chỉ chia sẻ ảnh và log từ fixture tổng hợp.

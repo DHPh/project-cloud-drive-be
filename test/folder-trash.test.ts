@@ -7,6 +7,7 @@ import test from 'node:test';
 import { createApp } from '../src/app';
 import { appConfig } from '../src/config';
 import { createDatabase } from '../src/database';
+import { AddFolderTrash1765238400000 } from '../src/migrations/1765238400000-AddFolderTrash';
 import type { ObjectStorage } from '../src/object-storage';
 import { hashPassword } from '../src/session';
 
@@ -101,10 +102,12 @@ test('TRASH-02 restores a private batch, retains separate deletions, and resolve
   await previous.destroy();
 
   await db.initialize();
-  assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), ['AddFolderTrash1765238400000']);
+  assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
+    'AddFolderTrash1765238400000', 'AddTrashPurge1765324800000',
+  ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'),
-    legacyFolders.map((folder) => ({ ...folder, trash_root_id: null, trashed_at: null })));
+    legacyFolders.map((folder) => ({ ...folder, trash_root_id: null, trashed_at: null, trash_event_id: null })));
 
   let operationsOnObjects = 0;
   const storage: ObjectStorage = {
@@ -204,7 +207,8 @@ test('TRASH-02 restores a private batch, retains separate deletions, and resolve
   }), 404);
   await json(await changeFolder(child, 'restore'), 404);
   await json(await request(file + '/restore', owner, 'POST'), 404);
-  await assert.rejects(db.undoLastMigration(), /Restore folder trash before reverting this migration/);
+  await assert.rejects(db.transaction((manager) => new AddFolderTrash1765238400000().down(manager.queryRunner!)),
+    /Restore folder trash before reverting this migration/);
 
   const currentShared = (await json(await request('/shared-folders', viewer), 200)).data.items;
   assert.deepEqual(currentShared.map((item: { id: string }) => item.id), [sharedParent]);
@@ -263,5 +267,8 @@ test('TRASH-02 restores a private batch, retains separate deletions, and resolve
   assert.deepEqual(await db.query('SELECT id, used_bytes, quota_bytes FROM users ORDER BY id'), originalQuota);
   assert.equal((await json(await request(mixedList, owner), 200)).pagination.total, 0);
   await db.undoLastMigration();
-  assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), ['AddFolderTrash1765238400000']);
+  await db.undoLastMigration();
+  assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
+    'AddFolderTrash1765238400000', 'AddTrashPurge1765324800000',
+  ]);
 });

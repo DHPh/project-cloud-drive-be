@@ -12,6 +12,8 @@ export const sessionRequired = () => new ApiError(401, 'SESSION_REQUIRED', 'Sign
 export const notFound = () => new ApiError(404, 'NOT_FOUND', 'The requested item was not found.');
 export const unsupportedMedia = () => new ApiError(415, 'UNSUPPORTED_MEDIA_TYPE', 'This upload media type is not supported.');
 export const storageUnavailable = () => new ApiError(503, 'STORAGE_UNAVAILABLE', 'File storage is temporarily unavailable.');
+export const staleTrashEvent = () => new ApiError(409, 'STALE_TRASH_EVENT', 'The Trash entry has changed. Refresh the list and try again.');
+export const trashDeleteInProgress = () => new ApiError(409, 'DELETE_IN_PROGRESS', 'This item is being permanently deleted.');
 
 export function reportFailure(context: string, error: unknown): void {
   const type = error instanceof Error ? error.name : 'Error';
