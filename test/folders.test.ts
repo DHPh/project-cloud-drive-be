@@ -88,10 +88,11 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
     'AddFolderShares1765152000000',
     'AddFolderTrash1765238400000',
     'AddTrashPurge1765324800000',
+    'AddFolderDescription1765411200000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'),
-    snapshotFolders.map((folder) => ({ ...folder, trash_root_id: null, trashed_at: null, trash_event_id: null })));
+    snapshotFolders.map((folder) => ({ ...folder, trash_root_id: null, trashed_at: null, trash_event_id: null, description: null })));
   let storageReads = 0;
   const storage: ObjectStorage = {
     async read(key) {

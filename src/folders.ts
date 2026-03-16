@@ -9,6 +9,7 @@ export type FolderRow = {
   id: string;
   name: string;
   parent_id: string | null;
+  description: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 };
@@ -19,6 +20,7 @@ export function folderSummary(folder: FolderRow) {
     id: folder.id,
     name: folder.name,
     parentId: folder.parent_id,
+    description: folder.description,
     createdAt: new Date(folder.created_at).toISOString(),
     updatedAt: new Date(folder.updated_at).toISOString(),
   };
@@ -26,7 +28,7 @@ export function folderSummary(folder: FolderRow) {
 
 type ListedRow = (FolderRow & { sort_kind: 0 }) | (FileRow & { sort_kind: 1 });
 
-export const folderFields = 'id, name, parent_id, created_at, updated_at';
+export const folderFields = 'id, name, parent_id, description, created_at, updated_at';
 
 async function writeFolder(
   db: DataSource, ownerId: string, change: (manager: EntityManager) => Promise<FolderRow | undefined>
@@ -49,14 +51,14 @@ async function writeFolder(
   }
 }
 
-export function createFolder(db: DataSource, ownerId: string, { name, parentId = null }: FolderCreate) {
+export function createFolder(db: DataSource, ownerId: string, { name, parentId = null, description = null }: FolderCreate) {
   return writeFolder(db, ownerId, async (manager) => {
     if (parentId !== null) await requireOwnedFolder(manager, ownerId, parentId);
 
     const [created] = await manager.query<FolderRow[]>(`
-      INSERT INTO folders (id, name, parent_id, owner_id)
-      VALUES ($1, $2, $3, $4) RETURNING ${folderFields}
-    `, [randomUUID(), name, parentId, ownerId]);
+      INSERT INTO folders (id, name, parent_id, owner_id, description)
+      VALUES ($1, $2, $3, $4, $5) RETURNING ${folderFields}
+    `, [randomUUID(), name, parentId, ownerId, description]);
     return created;
   });
 }
@@ -71,7 +73,8 @@ export function updateFolder(db: DataSource, ownerId: string, folderId: string, 
 
     const name = input.name ?? current.name;
     const parentId = input.parentId === undefined ? current.parent_id : input.parentId;
-    if (name === current.name && parentId === current.parent_id) return current;
+    const description = input.description === undefined ? current.description : input.description;
+    if (name === current.name && parentId === current.parent_id && description === current.description) return current;
 
     if (parentId !== null && parentId !== current.parent_id) {
       const [target] = await manager.query<{ exists: boolean; cycle: boolean }[]>(`
@@ -94,11 +97,11 @@ export function updateFolder(db: DataSource, ownerId: string, folderId: string, 
 
     const [updated] = await manager.query<FolderRow[]>(`
       WITH changed AS (
-        UPDATE folders SET name = $3, parent_id = $4, updated_at = statement_timestamp()
+        UPDATE folders SET name = $3, parent_id = $4, description = $5, updated_at = statement_timestamp()
         WHERE id = $1 AND owner_id = $2 RETURNING ${folderFields}
       )
       SELECT * FROM changed
-    `, [folderId, ownerId, name, parentId]);
+    `, [folderId, ownerId, name, parentId, description]);
     return updated;
   });
 }
@@ -115,7 +118,8 @@ export async function listFolder(
     WITH current_folder AS (
       SELECT id, owner_id FROM folders WHERE id = $2::uuid AND trash_root_id IS NULL
     ), ancestors AS (
-      SELECT f.id, f.name, f.parent_id, f.created_at, f.updated_at, a.distance
+      SELECT f.id, f.name, f.parent_id, f.created_at, f.updated_at, a.distance,
+        CASE WHEN a.distance = 0 THEN f.description END AS description
       FROM current_folder target
       CROSS JOIN LATERAL drive_folder_ancestors(target.id, target.owner_id) a
       JOIN folders f ON f.id = a.folder_id
@@ -131,7 +135,7 @@ export async function listFolder(
       GROUP BY target.owner_id
     ), direct_children AS (
       SELECT id, 0 AS sort_kind, name, parent_id, NULL::text AS original_name, NULL::uuid AS folder_id,
-        NULL::text AS mime_type, NULL::bigint AS size_bytes, NULL::text AS description, NULL::text[] AS tags,
+        NULL::text AS mime_type, NULL::bigint AS size_bytes, description, NULL::text[] AS tags,
         created_at, updated_at
       FROM folders
       WHERE owner_id = (SELECT owner_id FROM scope) AND parent_id IS NOT DISTINCT FROM $2::uuid

@@ -80,6 +80,7 @@ test('TRASH-01 upgrades a populated DRIVE-01 schema and preserves each file thro
     'AddFolderShares1765152000000',
     'AddFolderTrash1765238400000',
     'AddTrashPurge1765324800000',
+    'AddFolderDescription1765411200000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   const readMetadata = () => db.query(`

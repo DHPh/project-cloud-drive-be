@@ -8,6 +8,7 @@ import { createApp } from '../src/app';
 import { appConfig } from '../src/config';
 import { createDatabase } from '../src/database';
 import { withFileObjectLock } from '../src/files';
+import { AddTrashPurge1765324800000 } from '../src/migrations/1765324800000-AddTrashPurge';
 import type { ObjectStorage } from '../src/object-storage';
 import { hashPassword } from '../src/session';
 import { createTrashPurge } from '../src/trash-purge';
@@ -102,7 +103,9 @@ async function createFixture(t: TestContext) {
   async function start() {
     await legacy.destroy();
     await db.initialize();
-    assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), ['AddTrashPurge1765324800000']);
+    assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
+      'AddTrashPurge1765324800000', 'AddFolderDescription1765411200000',
+    ]);
     assert.deepEqual(await db.runMigrations(), []);
     server = createServer(createApp(db, storage, appConfig({ APP_ORIGIN: origin })));
     server.listen(0, '127.0.0.1');
@@ -187,7 +190,8 @@ test('TRASH-03 purges only a single tree event, resumes partial deletion and rel
   assert.equal((await api.purge(entry, api.other)).status, 404);
   assert.equal((await api.post('/trash/folder/' + parent + '/purge', { trashEventId: entry.trashEventId }, api.owner, 'http://127.0.0.1:9999')).status, 403);
   await expectAccepted(await api.purge(entry), 1);
-  await assert.rejects(db.undoLastMigration(), /Complete queued Trash purges/);
+  await assert.rejects(db.transaction((manager) => new AddTrashPurge1765324800000().down(manager.queryRunner!)),
+    /Complete queued Trash purges/);
   await expectConflict(await api.action('folder', parent, 'restore', entry.trashEventId), 'DELETE_IN_PROGRESS');
   assert.equal(await quota(), 112);
   assert.equal((await api.entry(parent)).purgeStatus, 'purging');

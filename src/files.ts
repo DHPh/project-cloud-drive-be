@@ -175,11 +175,12 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
   }
 
   async function get(userId: string, fileId: string) {
-    const [file] = await db.query<FileRow[]>(
-      `SELECT ${fileFields} FROM files WHERE ${fileReadAccess}`, [fileId, userId]
-    );
+    const [file] = await db.query<(FileRow & { access: 'owner' | 'viewer' })[]>(`
+      SELECT ${fileFields}, CASE WHEN owner_id = $2 THEN 'owner' ELSE 'viewer' END AS access
+      FROM files WHERE ${fileReadAccess}
+    `, [fileId, userId]);
     if (!file) throw notFound();
-    return fileSummary(file);
+    return { ...fileSummary(file), access: file.access };
   }
 
   async function download(userId: string, fileId: string) {

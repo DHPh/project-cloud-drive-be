@@ -45,8 +45,14 @@ OpenAPI `0.5.0` bổ sung SHARE-02. Chủ sở hữu dùng `/folders/{folderId}/
 
 OpenAPI `0.6.0` bổ sung TRASH-02. `POST /folders/{folderId}/trash` và `POST /folders/{folderId}/restore` xử lý cả lần xóa và trả tên, cha cùng thời điểm xóa thực tế. `GET /trash?includeFolders=true` phân trang chung tệp xóa riêng và thư mục gốc của mỗi cây đã xóa. `GET /trash` mặc định giữ danh sách tệp xóa riêng cho client hiện có. Phản hồi thao tác tệp bổ sung `originalName`. Khi trùng tên lúc khôi phục, API trả tên có hậu tố ` - khôi phục`, thêm số khi cần. Triển khai migration và backend `0.6.0` trước frontend dùng hợp đồng này.
 
+`parentId` của thư mục hoặc `folderId` của tệp trong phản hồi khôi phục là đích thực tế. Giá trị `null` trỏ về Drive gốc. Hồi đáp cho thư mục dùng `name` và cho tệp dùng `originalName`. Danh sách hỗn hợp phân loại bằng `kind` để frontend chọn thao tác tương ứng.
+
 ## TRASH-03
 
 OpenAPI `0.7.0` bổ sung xóa vĩnh viễn theo lần xóa. `GET /trash` trả `trashEventId`, `deleteAfter`, `purgeStatus` và `data.summary` cho cả tài khoản. `POST /trash/{kind}/{itemId}/purge` nhận `trashEventId`. `POST /trash/empty` nhận `requestId` do client tạo cho một lần xác nhận. Cả hai trả `202` với số mục đã nhận để xử lý. Gửi lại cùng lần xóa hoặc ID yêu cầu giữ kết quả ban đầu. Client mới gửi `trashEventId` khi khôi phục. API trả `409 DELETE_IN_PROGRESS` cho mục đang dọn và `409 STALE_TRASH_EVENT` cho lần xóa đã thay đổi. Xem thứ tự nâng cấp trong [thiết kế backend](../design.md#xóa-vĩnh-viễn-theo-lần-đưa-vào-thùng-rác).
 
-`parentId` của thư mục hoặc `folderId` của tệp trong phản hồi khôi phục là đích thực tế. Giá trị `null` trỏ về Drive gốc. Hồi đáp cho thư mục dùng `name` và cho tệp dùng `originalName`. Danh sách hỗn hợp phân loại bằng `kind` để frontend chọn thao tác tương ứng.
+## DRIVE-03
+
+OpenAPI `0.8.0` bổ sung `FileDetailResponse` cho `GET /files/{fileId}`. `data.access` trả `owner` hoặc `viewer` theo quyền đọc hiện hành. Upload và `PATCH /files/{fileId}` tiếp tục trả `FileSummary`. Chủ tệp dùng PATCH để cập nhật mô tả và thẻ. Truyền `description: null` hoặc `tags: []` để xóa giá trị tương ứng. Bỏ trường giữ dữ liệu hiện tại. Mô tả tối đa 2.000 code point Unicode. Mảng thẻ tối đa 20 giá trị, mỗi giá trị dài 1–64 code point và so trùng chính xác. Tài khoản ngoài phạm vi đọc hoặc ghi nhận `404`.
+
+`POST /folders` và `PATCH /folders/{folderId}` nhận `description` tùy chọn, là văn bản thuần tối đa 2.000 code point Unicode hoặc `null`. Tạo khi bỏ trường hoặc gửi `null` sẽ lưu `null`. Khi PATCH, bỏ trường giữ dữ liệu hiện tại, gửi `null` để xóa mô tả. PATCH chỉ gửi trường mô tả là hợp lệ. `FolderSummary` trả trường nullable trong phản hồi tạo, cập nhật, nội dung thư mục và danh sách Thùng rác. Danh sách thư mục nhận chia sẻ và breadcrumb giữ hợp đồng riêng. Chạy migration, backend `0.8.0` rồi frontend đã đồng bộ schema theo thứ tự. [Thiết kế backend](../design.md#chi-tiết-tệp-và-mô-tả-thư-mục)

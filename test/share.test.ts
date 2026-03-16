@@ -73,6 +73,7 @@ test('SHARE-01 limits file reads to active shares and clears grants atomically o
     'AddFolderShares1765152000000',
     'AddFolderTrash1765238400000',
     'AddTrashPurge1765324800000',
+    'AddFolderDescription1765411200000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   const calendarEnds = await db.query<{ expires_at: Date }[]>(`
@@ -140,7 +141,8 @@ test('SHARE-01 limits file reads to active shares and clears grants atomically o
 
   assert.deepEqual(await ownerGrants(), emptyPage);
   assert.deepEqual(await received(recipient), emptyPage);
-  const ownedFile = (await json(await request(file, owner), 200)).data;
+  const { access, ...ownedFile } = (await json(await request(file, owner), 200)).data;
+  assert.equal(access, 'owner');
   assert.equal(ownedFile.originalName, 'Tài liệu.txt');
   await json(await request(file), 401);
   await json(await request(file, outsider), 404);
@@ -172,7 +174,7 @@ test('SHARE-01 limits file reads to active shares and clears grants atomically o
     firstGrant
   );
 
-  assert.deepEqual((await json(await request(file, recipient), 200)).data, ownedFile);
+  assert.deepEqual((await json(await request(file, recipient), 200)).data, { ...ownedFile, access: 'viewer' });
   assert.deepEqual((await received(recipient)).data.items, [{
     ...ownedFile, ownerName: 'Test Owner', sharedAt: grant.grantedAt, expiresAt: grant.expiresAt,
   }]);
@@ -254,7 +256,7 @@ test('SHARE-01 limits file reads to active shares and clears grants atomically o
   assert.deepEqual(await received(outsider), emptyPage);
   await json(await request(file + '/restore', owner, { method: 'POST' }), 200);
   assert.deepEqual(await ownerGrants(), emptyPage);
-  assert.deepEqual((await json(await request(file, owner), 200)).data, ownedFile);
+  assert.deepEqual((await json(await request(file, owner), 200)).data, { ...ownedFile, access: 'owner' });
   for (const formerRecipient of [recipient, outsider]) {
     await json(await request(file, formerRecipient), 404);
     await json(await request(download, formerRecipient), 404);

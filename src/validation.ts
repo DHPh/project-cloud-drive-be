@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const uuidPattern = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const isDbText = (value: string): boolean => !/[\u0000\uD800-\uDFFF]/u.test(value);
+const isDbTextWithin = (value: string, max: number): boolean => isDbText(value) && [...value].length <= max;
 const isFileName = (value: string): boolean =>
   !/[/\\\u0000-\u001F\u007F\uD800-\uDFFF]/u.test(value) && value.trim().length > 0 && value !== '.' && value !== '..';
 
@@ -41,21 +42,24 @@ export const folderQuerySchema = paginationQuerySchema.extend({
 });
 
 const folderNameSchema = z.string().trim().min(1).refine((name) => isDbText(name) && [...name].length <= 255);
+const descriptionSchema = z.string().refine((value) => isDbTextWithin(value, 2000)).nullable().optional();
 
 export const createFolderSchema = z.strictObject({
   name: folderNameSchema,
   parentId: folderUuidSchema.nullish(),
+  description: descriptionSchema,
 });
 
 export const updateFolderSchema = z.strictObject({
   name: folderNameSchema.optional(),
   parentId: folderUuidSchema.nullish(),
-}).refine(({ name, parentId }) => name !== undefined || parentId !== undefined);
+  description: descriptionSchema,
+}).refine(({ name, parentId, description }) => name !== undefined || parentId !== undefined || description !== undefined);
 
 export const updateFileSchema = z.strictObject({
   originalName: fileNameSchema.optional(),
-  description: z.string().max(2000).refine(isDbText).nullable().optional(),
-  tags: z.array(z.string().min(1).max(64).refine(isDbText)).max(20)
+  description: descriptionSchema,
+  tags: z.array(z.string().min(1).refine((tag) => isDbTextWithin(tag, 64))).max(20)
     .refine((tags) => tags.length === new Set(tags).size).optional(),
   folderId: folderUuidSchema.nullish(),
 }).refine((value) => Object.keys(value).length > 0);

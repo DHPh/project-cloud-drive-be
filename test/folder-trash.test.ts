@@ -103,11 +103,11 @@ test('TRASH-02 restores a private batch, retains separate deletions, and resolve
 
   await db.initialize();
   assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
-    'AddFolderTrash1765238400000', 'AddTrashPurge1765324800000',
+    'AddFolderTrash1765238400000', 'AddTrashPurge1765324800000', 'AddFolderDescription1765411200000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'),
-    legacyFolders.map((folder) => ({ ...folder, trash_root_id: null, trashed_at: null, trash_event_id: null })));
+    legacyFolders.map((folder) => ({ ...folder, trash_root_id: null, trashed_at: null, trash_event_id: null, description: null })));
 
   let operationsOnObjects = 0;
   const storage: ObjectStorage = {
@@ -268,7 +268,8 @@ test('TRASH-02 restores a private batch, retains separate deletions, and resolve
   assert.equal((await json(await request(mixedList, owner), 200)).pagination.total, 0);
   await db.undoLastMigration();
   await db.undoLastMigration();
+  await db.undoLastMigration();
   assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
-    'AddFolderTrash1765238400000', 'AddTrashPurge1765324800000',
+    'AddFolderTrash1765238400000', 'AddTrashPurge1765324800000', 'AddFolderDescription1765411200000',
   ]);
 });

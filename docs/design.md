@@ -30,6 +30,8 @@ Migration `AddFolderTrash1765238400000` bổ sung `trash_root_id` cho mọi thư
 
 Cây khôi phục về cha cũ nếu còn hoạt động và riêng tư, hoặc Drive gốc. Tệp xóa riêng dùng cùng quy tắc. Nếu đã có mục hoạt động cùng loại và tên chính xác ở đích, khôi phục với tên còn trống dùng hậu tố ` - khôi phục` rồi tăng số khi cần. Với tệp, hậu tố nằm trước phần mở rộng cuối. Kiểm tra trạng thái, đích và tên trong transaction dưới khóa cùng chủ. Trả tên và đích thực tế để giao diện dùng ngay sau thao tác.
 
+Khôi phục có thể cập nhật tên và vị trí. Mô tả và thẻ được giữ trên cùng bản ghi. [Dữ liệu DRIVE-03](#chi-tiết-tệp-và-mô-tả-thư-mục)
+
 Triển khai migration, API rồi frontend theo thứ tự. Frontend cũ tiếp tục nhận danh sách tệp xóa riêng khi gọi `GET /trash` theo hợp đồng cũ. Sau khi đã đưa thư mục vào Thùng rác, phương án quay lui cần API hiểu trạng thái này hoặc phục hồi đồng bộ PostgreSQL và MinIO trước khi mở lại dịch vụ. Migration từ chối quay lui schema khi vẫn còn thư mục ở Thùng rác. [Tương thích HTTP](contracts/README.md#trash-02)
 
 ## Xóa vĩnh viễn theo lần đưa vào Thùng rác
@@ -53,6 +55,16 @@ DRIVE-02 giữ tên chính xác phân biệt hoa thường sau khi cắt khoản
 Thao tác tạo và cập nhật cây thư mục lấy khóa transaction theo chủ sở hữu trước khi kiểm tra cha, tổ tiên và tên ở vị trí đích. Khóa cùng chủ tuần tự hóa các thao tác di chuyển đối nghịch. Backend kiểm tra đích cùng chủ và chặn vòng lặp. Đổi tên và di chuyển chỉ ghi bản ghi thư mục, giữ ID, object, quota và quyền chia sẻ tệp.
 
 Khi cập nhật tên và cha với cùng giá trị, trả lại thư mục hiện tại. Bộ chọn đích lấy `type=folders` để giới hạn tập đếm và phân trang. [Quy định HTTP](contracts/README.md#drive-02)
+
+## Chi tiết tệp và mô tả thư mục
+
+DRIVE-03 tái sử dụng cập nhật tệp với `description` và `tags`. Khi đọc chi tiết tệp, suy ra `access` từ quyền sở hữu trong cùng truy vấn đã kiểm tra trạng thái hoạt động và quyền đọc trực tiếp hoặc kế thừa. Các phản hồi upload và cập nhật tệp tiếp tục dùng tóm tắt tệp. Quyền ghi vẫn kiểm tra chủ sở hữu trên backend.
+
+Mô tả tệp và thẻ dùng các cột hiện có. Validation đếm code point Unicode cho mô tả và từng thẻ, giữ thứ tự và so trùng chính xác theo hợp đồng. Giá trị `null` xóa mô tả, mảng rỗng xóa thẻ và trường vắng mặt giữ giá trị đang lưu. Chỉ cập nhật metadata sẽ giữ ID, vị trí, quyền, object key, byte và quota.
+
+Migration `AddFolderDescription1765411200000` thêm cột `folders.description` nullable với `CHECK char_length(description) <= 2000`. Các thư mục hiện có nhận `null` qua lần thêm cột. Tạo mới có thể bỏ trường. PATCH chỉ gửi mô tả dùng cùng khóa cây theo chủ như đổi tên hoặc đổi cha. Nếu mọi giá trị đều như trước, trả bản ghi hiện tại. Thông tin trả về qua `FolderSummary` sau khi kiểm tra quyền. Breadcrumb giữ ID và tên, danh sách thư mục nhận dùng DTO riêng.
+
+Thứ tự nâng cấp là migration, backend rồi frontend đồng bộ contract. Khi quay lui backend sau khi đã nhập mô tả, giữ cột nullable để bảo toàn dữ liệu và xác nhận tương thích của bản chạy lại. `down()` của migration bỏ cột và dữ liệu mô tả đi cùng cột. [Hợp đồng DRIVE-03](contracts/README.md#drive-03) · [Kiểm chứng backend](verification.md)
 
 ## Kế thừa quyền thư mục
 
