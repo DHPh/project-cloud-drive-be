@@ -66,11 +66,29 @@ Migration `AddFolderDescription1765411200000` thêm cột `folders.description` 
 
 Thứ tự nâng cấp là migration, backend rồi frontend đồng bộ contract. Khi quay lui backend sau khi đã nhập mô tả, giữ cột nullable để bảo toàn dữ liệu và xác nhận tương thích của bản chạy lại. `down()` của migration bỏ cột và dữ liệu mô tả đi cùng cột. [Hợp đồng DRIVE-03](contracts/README.md#drive-03) · [Kiểm chứng backend](verification.md)
 
+## Tìm toàn Drive và Dòng thời gian
+
+DRIVE-04 giữ tìm theo tên các mục con trực tiếp. Các truy vấn mới áp chủ sở hữu và trạng thái hoạt động trước khi đếm và phân trang. Tìm toàn Drive dùng đối chiếu chuỗi theo tên và tùy chọn đối chiếu mô tả, thẻ tệp. Chỉ dựng breadcrumb cho các mục trong trang kết quả, trong cây hoạt động của tài khoản. Thứ tự có ID làm mốc phụ.
+
+Dòng thời gian đọc tệp hoàn tất upload theo `created_at` mới trước. Khoảng ngày gồm cả hai đầu theo lịch Việt Nam. Biên kết thúc là đầu ngày tiếp theo. Mục vào Thùng rác bị loại. Khi khôi phục, tệp trở lại cùng thời điểm upload.
+
+## Xem trước nội dung tệp
+
+`GET /files/{fileId}/preview` kiểm tra quyền đọc và trạng thái đang hoạt động giống trang chi tiết. Xem trước dùng định dạng cố định từ allowlist gồm JPEG, PNG, WebP, GIF, PDF và văn bản UTF-8. Kiểm tra chữ ký của ảnh/PDF trước khi trả. Văn bản được giải mã UTF-8 và trả dạng `text/plain`. Phản hồi dùng `private, no-store`, `nosniff` và sandbox cho nội dung mở trong frame. Tệp vượt giới hạn hoặc sai định dạng vẫn đi qua luồng tải xuống hiện có với cùng kiểm tra quyền.
+
 ## Kế thừa quyền thư mục
 
 Migration `AddFolderShares1765152000000` tạo `folder_shares` với khóa chính `(folder_id, recipient_id)` và truy vấn tổ tiên trong cùng cây chủ sở hữu. Quyền xem được tính từ grant trực tiếp và các grant thư mục còn hạn trên chuỗi tổ tiên hiện tại. Duyệt thư mục dùng cùng truy vấn cho quyền, breadcrumb, nội dung và số lượng. Ở đầu phạm vi xem, `parentId` là `null`. Danh sách nhận trực tiếp áp điều kiện hiệu lực theo từng loại tài nguyên. Drive gốc và các thao tác ghi cần quyền chủ sở hữu.
 
 Khôi phục tệp kiểm tra quyền còn hạn trên thư mục gốc và các thư mục cha. Nếu vị trí đó đang chia sẻ, cập nhật đích về Drive gốc để tệp trở lại riêng tư. Cấp/thu hồi quyền thư mục, đổi cây và khôi phục dùng chung khóa giao dịch theo chủ sở hữu. File ID, object key và quota giữ nguyên.
+
+## Đối soát lưu trữ OPS-01
+
+Lệnh `node dist/cli.js audit` đọc metadata PostgreSQL và danh sách object trong namespace `files/` của bucket cấu hình. Giữ PostgreSQL ở một snapshot `REPEATABLE READ READ ONLY`. Đọc theo cursor có giới hạn từng lô và ghép với các trang object theo thứ tự byte UTF-8 của key. Phần chạy ứng dụng chỉ giữ từng lô và một số mẫu cố định. CLI là giao diện vận hành cho lần đối soát này.
+
+Tệp `ready` kể cả đã đưa vào Thùng rác vẫn phải có object, trừ tệp đã được đưa vào hàng đợi xóa vĩnh viễn. Đếm riêng object khớp bản ghi `pending`, `cleanup` và hàng đợi xóa để giữ đúng trạng thái chuyển tiếp. Object chưa có bản ghi quá khoảng chờ `UPLOAD_RECOVERY_AGE_SECONDS` là ứng viên mồ côi cần xác minh. Object mới hoặc thiếu mốc thời gian được đếm riêng. Bản ghi với key ngoài namespace là một loại lệch khác. Tổng quota đã tính cần bằng tổng `size_bytes` của mọi bản ghi tệp còn lưu, gồm upload đang chờ, dọn upload lỗi, Thùng rác và xóa vĩnh viễn đang xử lý.
+
+Báo cáo JSON có ID và thời điểm chạy, bộ đếm đã quét và mẫu dùng mã băm để đối chiếu. Dung lượng dạng chuỗi thập phân để giữ chính xác `bigint`. Mã thoát `0` là đã quét xong và chưa thấy lệch cần xác minh. Mã `2` là đã quét xong và có lệch. Lỗi kết nối, phân trang hoặc truy vấn trả mã `1` và báo lỗi tổng quát. Kết quả tới từ hai hệ thống trong cùng một lần quét. Đối chiếu lại trong cửa sổ dừng ghi trước khi kết luận về mục lệch. [Runbook đối soát, backup và phục hồi](operations.md)
 
 ## Migration và kiểm thử
 

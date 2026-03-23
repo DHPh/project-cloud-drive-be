@@ -2,6 +2,7 @@ import { pipeline } from 'node:stream/promises';
 import express, { type Request, type Response } from 'express';
 import type { DataSource } from 'typeorm';
 import type { appConfig } from './config';
+import { listDriveTimeline, searchDrive } from './drive-listing';
 import { ApiError, notFound, sendError } from './errors';
 import { createFiles } from './files';
 import { createFolder, listFolder, updateFolder } from './folders';
@@ -12,9 +13,9 @@ import { createShareAdministration, listSharedFiles, listSharedFolders } from '.
 import { listTrash, setFileTrashed, setFolderTrashed } from './trash';
 import { emptyTrash, purgeTrashItem } from './trash-purge';
 import {
-  createFolderSchema, emptyTrashSchema, fileIdSchema, folderIdSchema, folderQuerySchema, folderUuidSchema,
-  grantFileShareSchema, loginSchema, paginationQuerySchema, trashEventSchema, trashKindSchema, trashQuerySchema,
-  updateFileSchema, updateFolderSchema,
+  createFolderSchema, driveSearchQuerySchema, driveTimelineQuerySchema, emptyTrashSchema, fileIdSchema,
+  folderIdSchema, folderQuerySchema, folderUuidSchema, grantFileShareSchema, loginSchema, paginationQuerySchema,
+  trashEventSchema, trashKindSchema, trashQuerySchema, updateFileSchema, updateFolderSchema,
 } from './validation';
 
 function rateLimited(res: Response, retryAfter: number): never {
@@ -98,6 +99,18 @@ export function createApp(
     await sessions.logout(req);
     res.clearCookie(sessions.cookieName, sessions.cookieOptions);
     res.json({ success: true, data: { signedOut: true } });
+  });
+
+  api.get('/drive/search', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await searchDrive(db, user.id, driveSearchQuerySchema.parse(req.query));
+    res.json({ success: true, ...result });
+  });
+
+  api.get('/drive/timeline', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await listDriveTimeline(db, user.id, driveTimelineQuerySchema.parse(req.query));
+    res.json({ success: true, ...result });
   });
 
   api.get('/folders/:folderId/contents', async (req, res) => {

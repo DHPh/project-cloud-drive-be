@@ -41,6 +41,21 @@ export const folderQuerySchema = paginationQuerySchema.extend({
   type: z.enum(['all', 'folders']).default('all'),
 });
 
+export const driveSearchQuerySchema = paginationQuerySchema.extend({
+  q: z.string().refine((value) => isDbTextWithin(value, 255)).transform((value) => value.trim()).default(''),
+  includeMetadata: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
+  type: z.enum(['all', 'files', 'folders']).default('all'),
+  sort: z.enum(['name', 'newest']).default('name'),
+});
+
+const timelineDateSchema = z.iso.date().refine((date) => !date.startsWith('0000')).optional();
+
+export const driveTimelineQuerySchema = paginationQuerySchema.extend({
+  from: timelineDateSchema,
+  to: timelineDateSchema,
+  type: z.enum(['all', 'image', 'video', 'audio', 'pdf', 'document', 'other']).default('all'),
+}).refine(({ from, to }) => !from || !to || from <= to);
+
 const folderNameSchema = z.string().trim().min(1).refine((name) => isDbText(name) && [...name].length <= 255);
 const descriptionSchema = z.string().refine((value) => isDbTextWithin(value, 2000)).nullable().optional();
 
@@ -78,3 +93,5 @@ export type FileUpdate = z.infer<typeof updateFileSchema>;
 export type FileShareGrant = z.infer<typeof grantFileShareSchema>;
 export type FolderCreate = z.infer<typeof createFolderSchema>;
 export type FolderUpdate = z.infer<typeof updateFolderSchema>;
+export type DriveSearchQuery = z.infer<typeof driveSearchQuerySchema>;
+export type DriveTimelineQuery = z.infer<typeof driveTimelineQuerySchema>;
