@@ -6,8 +6,12 @@ import { ApiError, sessionRequired } from './errors';
 const cookieName = 'cloud_drive_session';
 const unknownUserHash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0000000000000000000000000000000000000000000000000000000000000000';
 
-type User = { id: string; email: string; name: string };
+export type User = { id: string; email: string; name: string; role: 'user' | 'admin' };
 type Credential = User & { password_hash: string };
+
+export function publicUser({ id, email, name, role }: User): User {
+  return { id, email, name, role };
+}
 
 function deriveKey(password: string, salt: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -33,11 +37,11 @@ function cookieFrom(req: Request): string | undefined {
   }
 }
 
-function tokenHash(token: string): string {
+export function tokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
   const [salt, hash] = storedHash.split(':');
   if (!salt || !hash || !/^[0-9a-f]{64}$/.test(hash)) return false;
   const actual = await deriveKey(password, salt);
@@ -49,7 +53,7 @@ export function createSessions(db: DataSource, ttlMs: number, secure: boolean) {
 
   async function login(email: string, password: string, request: Request) {
     const [credential] = await db.query<Credential[]>(
-      'SELECT id, email, name, password_hash FROM users WHERE email = $1',
+      'SELECT id, email, name, role, password_hash FROM users WHERE email = $1 AND disabled_at IS NULL',
       [email]
     );
     const passwordValid = await verifyPassword(password, credential?.password_hash ?? unknownUserHash);
@@ -59,24 +63,29 @@ export function createSessions(db: DataSource, ttlMs: number, secure: boolean) {
 
     const token = randomBytes(32).toString('base64url');
     const previous = cookieFrom(request);
-    await db.transaction(async (manager) => {
+    const user = await db.transaction(async (manager) => {
+      const [current] = await manager.query<User[]>(`
+        SELECT id, email, name, role FROM users WHERE id = $1 AND password_hash = $2 AND disabled_at IS NULL FOR UPDATE
+      `, [credential.id, credential.password_hash]);
+      if (!current) throw new ApiError(401, 'INVALID_CREDENTIALS', 'The email or password is incorrect.');
       if (previous) await manager.query('DELETE FROM sessions WHERE token_hash = $1', [tokenHash(previous)]);
       await manager.query(
         'INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)',
-        [tokenHash(token), credential.id, new Date(Date.now() + ttlMs)]
+        [tokenHash(token), current.id, new Date(Date.now() + ttlMs)]
       );
+      return current;
     });
 
-    return { token, user: { id: credential.id, email: credential.email, name: credential.name } };
+    return { token, user };
   }
 
   async function currentUser(req: Request): Promise<User> {
     const token = cookieFrom(req);
     if (!token) throw sessionRequired();
     const [user] = await db.query<User[]>(`
-      SELECT u.id, u.email, u.name
+      SELECT u.id, u.email, u.name, u.role
       FROM sessions s JOIN users u ON u.id = s.user_id
-      WHERE s.token_hash = $1 AND s.expires_at > now()
+      WHERE s.token_hash = $1 AND s.expires_at > now() AND u.disabled_at IS NULL
     `, [tokenHash(token)]);
     if (!user) throw sessionRequired();
     return user;

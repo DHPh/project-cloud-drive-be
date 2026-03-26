@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
-  "engines": { "node": ">=24 <25" },
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "infra:up": "docker compose up -d --wait",
     "infra:down": "docker compose down",
@@ -19,6 +21,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.888.0",
+    "archiver": "7.0.1",
     "busboy": "^1.6.0",
     "express": "^5.1.0",
     "pg": "^8.16.3",
@@ -27,6 +30,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@types/archiver": "7.0.0",
     "@types/busboy": "^1.5.4",
     "@types/express": "^5.0.5",
     "@types/node": "^22.13.10",

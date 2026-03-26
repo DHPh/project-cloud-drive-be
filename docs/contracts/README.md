@@ -6,6 +6,14 @@ Backend duy trì [OpenAPI](openapi.yaml) làm nguồn chuẩn cho route, request
 
 API dùng base path `/api/v1` và cookie phiên cùng origin. Request ghi cần `Origin` khớp `APP_ORIGIN`. Phản hồi riêng tư, kể cả lỗi, dùng `Cache-Control: private, no-store`. JSON thành công có `success: true` và `data`, kèm `pagination` khi phân trang. JSON lỗi có `success: false`, `error.code` và `error.message`. [Cách chạy](../../README.md) · [Kiểm chứng](../verification.md)
 
+## ACCOUNT-01 và ADMIN-01
+
+OpenAPI `0.11.0` thêm `role` vào tài khoản trả bởi đăng nhập và đọc phiên. `GET /account` đọc hồ sơ và dung lượng. `PATCH /account` đổi tên hiển thị. `POST /account/password` đổi mật khẩu và yêu cầu đăng nhập lại. Mật khẩu mới dài 12–1.024 ký tự.
+
+Admin dùng `/admin/invites` và `/admin/users/{userId}/reset-password` để phát hành token. Token chỉ xuất hiện khi phát hành. Gửi token bằng JSON tới `/auth/accept-invite` hoặc `/auth/reset-password`. API trả `404 ACCOUNT_LINK_NOT_FOUND`, `409 ACCOUNT_LINK_USED` hoặc `ACCOUNT_LINK_REVOKED`, và `410 ACCOUNT_LINK_EXPIRED` theo trạng thái link. Hai thao tác không cấp phiên. Lời mời hết hạn sau 24 giờ và link reset hết hạn sau 30 phút.
+
+`/admin/users` liệt kê tài khoản, quota và trạng thái. `PATCH /admin/users/{userId}` nhận một hoặc nhiều trường `quotaBytes`, `disabled`, `role`. API trả `409 QUOTA_BELOW_USAGE` hoặc `LAST_ACTIVE_ADMIN` khi vi phạm ràng buộc. `/admin/audit` liệt kê thao tác thành công và không chứa token. Các API quản trị trả `403` cho người đã đăng nhập thiếu vai trò admin. [Thiết kế backend](../design.md#tài-khoản-và-quản-trị)
+
 ## DRIVE-01
 
 OpenAPI `0.1.0` giới thiệu các thao tác sau.
@@ -60,3 +68,11 @@ OpenAPI `0.8.0` bổ sung `FileDetailResponse` cho `GET /files/{fileId}`. `data.
 ## DRIVE-04
 
 OpenAPI `0.9.0` thêm `GET /drive/search` và `GET /drive/timeline`. Mỗi dòng kết quả có `item` và `breadcrumbs` tới thư mục cha. Tìm kiếm nhận `q`, `includeMetadata`, `type`, `sort`, `page` và `limit`. Dòng thời gian nhận `from`, `to`, `type`, `page` và `limit`. Hai route chỉ trả mục đang hoạt động thuộc chủ tài khoản. [Thiết kế backend](../design.md#tìm-toàn-drive-và-dòng-thời-gian)
+
+## SHARE-03, PREVIEW-01 và ZIP-01
+
+OpenAPI `0.10.0` thêm `GET /shared-by-me` cho quyền trực tiếp của chủ trên tệp và thư mục đang hoạt động. Bộ lọc loại và trạng thái áp trước khi phân trang. Dùng các thao tác cấp, gia hạn và thu hồi theo tài nguyên để quản lý một quyền. QR chứa cùng URL mở tài nguyên theo phiên.
+
+`GET /files/{fileId}/preview` trả JPEG, PNG, WebP, GIF, PDF hoặc UTF-8 văn bản thuần sau khi kiểm tra quyền hiện hành. Giới hạn 512 KiB cho văn bản, 10 MiB cho ảnh/PDF. Các mã `PREVIEW_UNSUPPORTED` và `PREVIEW_TOO_LARGE` cho giao diện giữ đường tải gốc.
+
+`GET /folders/{folderId}/download` stream ZIP của cây hoạt động. Giới hạn 500 tệp, 500 thư mục và 100 MiB nội dung. Khi quyền đổi, dữ liệu thiếu hoặc luồng bị ngắt sau khi gửi header, kết nối kết thúc và giao diện xử lý như tải thất bại.

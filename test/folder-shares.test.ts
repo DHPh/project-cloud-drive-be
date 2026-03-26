@@ -86,6 +86,7 @@ test('SHARE-02 interprets live ancestor grants and restores files privately', { 
     'AddFolderTrash1765238400000',
     'AddTrashPurge1765324800000',
     'AddFolderDescription1765411200000',
+    'AddAccountAdministration1765497600000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM files ORDER BY id'),

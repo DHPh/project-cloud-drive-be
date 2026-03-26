@@ -1,21 +1,27 @@
 import { pipeline } from 'node:stream/promises';
 import express, { type Request, type Response } from 'express';
 import type { DataSource } from 'typeorm';
+import { createAccounts } from './accounts';
+import { createAdminAdministration } from './admin';
 import type { appConfig } from './config';
 import { listDriveTimeline, searchDrive } from './drive-listing';
 import { ApiError, notFound, sendError } from './errors';
 import { createFiles } from './files';
+import { prepareFolderArchive, writeFolderArchive } from './folder-archive';
 import { createFolder, listFolder, updateFolder } from './folders';
 import { attachmentHeader, readUpload } from './multipart';
 import type { ObjectStorage } from './object-storage';
+import { getPreview } from './preview';
 import { createSessions } from './session';
-import { createShareAdministration, listSharedFiles, listSharedFolders } from './shares';
+import { createShareAdministration, listOutgoingShares, listSharedFiles, listSharedFolders } from './shares';
 import { listTrash, setFileTrashed, setFolderTrashed } from './trash';
 import { emptyTrash, purgeTrashItem } from './trash-purge';
 import {
-  createFolderSchema, driveSearchQuerySchema, driveTimelineQuerySchema, emptyTrashSchema, fileIdSchema,
-  folderIdSchema, folderQuerySchema, folderUuidSchema, grantFileShareSchema, loginSchema, paginationQuerySchema,
-  trashEventSchema, trashKindSchema, trashQuerySchema, updateFileSchema, updateFolderSchema,
+  acceptInviteSchema, accountProfileSchema, adminInviteQuerySchema, adminUserQuerySchema, changePasswordSchema,
+  createFolderSchema, createInviteSchema, driveSearchQuerySchema, driveTimelineQuerySchema, emptyTrashSchema, fileIdSchema,
+  folderIdSchema, folderQuerySchema, folderUuidSchema, grantFileShareSchema, loginSchema, outgoingShareQuerySchema,
+  paginationQuerySchema, resetPasswordSchema, trashEventSchema, trashKindSchema, trashQuerySchema,
+  updateAdminUserSchema, updateFileSchema, updateFolderSchema,
 } from './validation';
 
 function rateLimited(res: Response, retryAfter: number): never {
@@ -56,13 +62,19 @@ export function createApp(
   const api = express.Router();
   const json = express.json({ limit: '32kb' });
   const sessions = createSessions(db, config.sessionTtlMs, config.secureCookie);
+  const accounts = createAccounts(db);
+  const admin = createAdminAdministration(db);
   const files = createFiles(db, storage, config.uploadRecoveryAgeMs);
   const shares = createShareAdministration(db, 'file');
   const folderShares = createShareAdministration(db, 'folder');
   const limitLogin = createRateLimit(30, 900000);
+  const limitAccountLinks = createRateLimit(20, 900000);
+  const limitPasswordChanges = createRateLimit(12, 900000);
   const limitUpload = createRateLimit(60, 60000);
   const maxActiveUploads = Math.max(1, Math.min(8, Math.floor((80 * 1024 * 1024) / config.maxUploadBytes)));
   let activeUploads = 0;
+  let activePreviews = 0;
+  let activeArchives = 0;
 
   app.disable('x-powered-by');
   app.use((_req, res, next) => {
@@ -99,6 +111,85 @@ export function createApp(
     await sessions.logout(req);
     res.clearCookie(sessions.cookieName, sessions.cookieOptions);
     res.json({ success: true, data: { signedOut: true } });
+  });
+
+  api.post('/auth/accept-invite', json, async (req, res) => {
+    limitAccountLinks(req.ip ?? req.socket.remoteAddress ?? 'unknown', res);
+    const { token, password, name } = acceptInviteSchema.parse(req.body);
+    const data = await accounts.acceptInvite(token, name, password);
+    res.status(201).json({ success: true, data });
+  });
+
+  api.post('/auth/reset-password', json, async (req, res) => {
+    limitAccountLinks(req.ip ?? req.socket.remoteAddress ?? 'unknown', res);
+    const { token, password } = resetPasswordSchema.parse(req.body);
+    await accounts.resetPassword(token, password);
+    res.json({ success: true, data: { passwordChanged: true } });
+  });
+
+  api.get('/account', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const data = await accounts.get(user.id);
+    res.json({ success: true, data });
+  });
+
+  api.patch('/account', json, async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const { name } = accountProfileSchema.parse(req.body);
+    const data = await accounts.setName(user.id, name);
+    res.json({ success: true, data });
+  });
+
+  api.post('/account/password', json, async (req, res) => {
+    const user = await sessions.currentUser(req);
+    limitPasswordChanges(user.id, res);
+    const { currentPassword, password } = changePasswordSchema.parse(req.body);
+    await accounts.changePassword(user.id, currentPassword, password);
+    res.clearCookie(sessions.cookieName, sessions.cookieOptions);
+    res.json({ success: true, data: { passwordChanged: true } });
+  });
+
+  api.get('/admin/invites', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await admin.listInvites(user, adminInviteQuerySchema.parse(req.query));
+    res.json({ success: true, ...result });
+  });
+
+  api.post('/admin/invites', json, async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const { email } = createInviteSchema.parse(req.body);
+    const data = await admin.createInvite(user.id, email);
+    res.status(201).json({ success: true, data });
+  });
+
+  api.delete('/admin/invites/:inviteId', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const data = await admin.revokeInvite(user.id, folderUuidSchema.parse(req.params.inviteId));
+    res.json({ success: true, data });
+  });
+
+  api.get('/admin/users', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await admin.listUsers(user, adminUserQuerySchema.parse(req.query));
+    res.json({ success: true, ...result });
+  });
+
+  api.patch('/admin/users/:userId', json, async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const data = await admin.updateUser(user.id, folderUuidSchema.parse(req.params.userId), updateAdminUserSchema.parse(req.body));
+    res.json({ success: true, data });
+  });
+
+  api.post('/admin/users/:userId/reset-password', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const data = await admin.issuePasswordReset(user.id, folderUuidSchema.parse(req.params.userId));
+    res.status(201).json({ success: true, data });
+  });
+
+  api.get('/admin/audit', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await admin.listAudit(user, paginationQuerySchema.parse(req.query));
+    res.json({ success: true, ...result });
   });
 
   api.get('/drive/search', async (req, res) => {
@@ -230,6 +321,44 @@ export function createApp(
     const user = await sessions.currentUser(req);
     const result = await listSharedFiles(db, user.id, paginationQuerySchema.parse(req.query));
     res.json({ success: true, ...result });
+  });
+
+  api.get('/shared-by-me', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const result = await listOutgoingShares(db, user.id, outgoingShareQuerySchema.parse(req.query));
+    res.json({ success: true, ...result });
+  });
+
+  api.get('/files/:fileId/preview', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const id = fileIdSchema.parse(req.params.fileId);
+    if (activePreviews >= 4) rateLimited(res, 1);
+    activePreviews++;
+    try {
+      const preview = await getPreview(files, user.id, id);
+      res.setHeader('Content-Type', preview.mimeType);
+      res.setHeader('Content-Disposition', attachmentHeader(preview.name).replace(/^attachment/, 'inline'));
+      res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; base-uri 'none'");
+      res.send(preview.body);
+    } finally {
+      activePreviews--;
+    }
+  });
+
+  api.get('/folders/:folderId/download', async (req, res) => {
+    const user = await sessions.currentUser(req);
+    const id = folderUuidSchema.parse(req.params.folderId);
+    if (activeArchives >= 2) rateLimited(res, 1);
+    activeArchives++;
+    try {
+      const manifest = await prepareFolderArchive(db, user.id, id);
+      if (res.destroyed) return;
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', attachmentHeader(manifest.name));
+      await writeFolderArchive(manifest, files, user.id, res);
+    } finally {
+      activeArchives--;
+    }
   });
 
   api.post('/files/:fileId/trash', async (req, res) => {

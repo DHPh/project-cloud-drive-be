@@ -46,7 +46,7 @@ test('DRIVE-01 HTTP contract and storage transitions on PostgreSQL', { skip: !te
   db.setOptions({ schema, extra: { options: '-c search_path=' + schema, statement_timeout: 10000 } });
   await db.initialize();
   t.after(async () => { await db.destroy(); });
-  assert.equal((await db.runMigrations()).length, 8);
+  assert.equal((await db.runMigrations()).length, 9);
   assert.equal((await db.runMigrations()).length, 0);
 
   const owner = randomUUID();
@@ -113,7 +113,8 @@ test('DRIVE-01 HTTP contract and storage transitions on PostgreSQL', { skip: !te
     assert.ok(cookie.includes('HttpOnly'));
     assert.ok(cookie.includes('SameSite=Lax'));
     const user = (await response.json()).data;
-    assert.deepEqual(Object.keys(user).sort(), ['email', 'id', 'name']);
+    assert.deepEqual(Object.keys(user).sort(), ['email', 'id', 'name', 'role']);
+    assert.equal(user.role, 'user');
     return cookie.split(';')[0]!;
   }
 

@@ -36,7 +36,8 @@ export function fileSummary(file: FileRow) {
 export const fileFields = 'id, original_name, folder_id, mime_type, size_bytes, description, tags, created_at, updated_at';
 
 const fileReadAccess = `
-  id = $1 AND upload_state = 'ready' AND trashed_at IS NULL AND ${fileParentIsActive()} AND (
+  id = $1 AND upload_state = 'ready' AND trashed_at IS NULL AND ${fileParentIsActive()}
+  AND EXISTS (SELECT 1 FROM users u WHERE u.id = files.owner_id AND u.disabled_at IS NULL) AND (
     owner_id = $2 OR EXISTS (
       SELECT 1 FROM file_shares
       WHERE file_id = files.id AND recipient_id = $2 AND expires_at > statement_timestamp()

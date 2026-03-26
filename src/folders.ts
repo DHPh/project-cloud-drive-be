@@ -116,7 +116,8 @@ export async function listFolder(
     access: 'owner' | 'viewer' | null; ancestors: FolderRow[]; total: string; items: ListedRow[];
   }[]>(`
     WITH current_folder AS (
-      SELECT id, owner_id FROM folders WHERE id = $2::uuid AND trash_root_id IS NULL
+      SELECT f.id, f.owner_id FROM folders f JOIN users u ON u.id = f.owner_id
+      WHERE f.id = $2::uuid AND f.trash_root_id IS NULL AND u.disabled_at IS NULL
     ), ancestors AS (
       SELECT f.id, f.name, f.parent_id, f.created_at, f.updated_at, a.distance,
         CASE WHEN a.distance = 0 THEN f.description END AS description

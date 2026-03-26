@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Cloud Drive API
-  version: 0.9.0
+  version: 0.11.0
   description: >-
     Browser API for sign-in, folder management, upload, file editing, download, file and folder trash, and sharing.
     State-changing browser requests require the configured application Origin.
@@ -15,6 +15,8 @@ tags:
   - name: Files
   - name: Trash
   - name: Sharing
+  - name: Account
+  - name: Admin
 
 paths:
   /auth/login:
@@ -120,6 +122,254 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
+  /auth/accept-invite:
+    post:
+      operationId: acceptAccountInvite
+      tags: [Account]
+      summary: Set a password and create the invited account
+      description: Consumes the one-time link and creates a user. The user signs in separately.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AcceptInviteRequest' }
+      responses:
+        '201':
+          description: The new account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AccountLinkNotFound' }
+        '409': { $ref: '#/components/responses/AccountConflict' }
+        '410': { $ref: '#/components/responses/AccountLinkExpired' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /auth/reset-password:
+    post:
+      operationId: resetAccountPassword
+      tags: [Account]
+      summary: Set a password from a one-time admin link
+      description: Consumes the link and revokes all sessions on the target account.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResetPasswordRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/PasswordChanged' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AccountLinkNotFound' }
+        '409': { $ref: '#/components/responses/AccountConflict' }
+        '410': { $ref: '#/components/responses/AccountLinkExpired' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /account:
+    get:
+      operationId: getAccount
+      tags: [Account]
+      summary: Read the account profile and storage usage
+      responses:
+        '200': { $ref: '#/components/responses/AccountProfile' }
+        '401': { $ref: '#/components/responses/SessionRequired' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    patch:
+      operationId: updateAccount
+      tags: [Account]
+      summary: Update the signed-in account's display name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAccountRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AccountProfile' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/SessionRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /account/password:
+    post:
+      operationId: changeAccountPassword
+      tags: [Account]
+      summary: Change the signed-in account's password and revoke all its sessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        '200':
+          description: The password changed. The browser session cookie is cleared.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+            Cache-Control:
+              $ref: '#/components/headers/PrivateCache'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PasswordChangedResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/SessionRequired' }
+        '403':
+          description: The request origin is disallowed or the current password is incorrect (`CURRENT_PASSWORD_INVALID`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /admin/invites:
+    get:
+      operationId: listAccountInvites
+      tags: [Admin]
+      summary: List invitations, most recently created first
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema: { type: string, enum: [all, active, expired, used, revoked], default: all }
+      responses:
+        '200':
+          description: A page of invitation statuses without tokens.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountInviteListResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/SessionRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      operationId: createAccountInvite
+      tags: [Admin]
+      summary: Issue a 24-hour invite to the given email address
+      description: The token is returned only on issuance. Issuing another invite revokes the prior active invite for that address.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateInviteRequest' }
+      responses:
+        '201':
+          description: The invite and its one-time token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountInviteIssuedResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/SessionRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/AccountConflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /admin/invites/{inviteId}:
+    delete:
+      operationId: revokeAccountInvite
+      tags: [Admin]
+      summary: Revoke an outstanding invitation
+      parameters:
+        - name: inviteId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The invite is no longer valid. Repeated revocation returns the same result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RevokedResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/SessionRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AccountLinkNotFound' }
+        '409': { $ref: '#/components/responses/AccountConflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /admin/users:
+    get:
+      operationId: listAdminUsers
+      tags: [Admin]
+      summary: List account status, role and storage usage in email order
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: q
+          in: query
+          description: Case-insensitive literal substring of name or email.
+          schema: { type: string, maxLength: 255, default: '' }
+      responses:
+        '200':
+          description: A page of user accounts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserListResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/SessionRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /admin/users/{userId}:
+    patch:
+      operationId: updateAdminUser
+      tags: [Admin]
+      summary: Change an account's role, status or quota
+      description: Omitted fields stay unchanged. The last active administrator must remain active and cannot be demoted.
+      parameters:
+        - $ref: '#/components/parameters/AdminUserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAdminUserRequest' }
+      responses:
+        '200':
+          description: The current account after the update.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/SessionRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AccountConflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /admin/users/{userId}/reset-password:
+    post:
+      operationId: issueAdminPasswordReset
+      tags: [Admin]
+      summary: Issue a 30-minute reset link for the account
+      description: Issuance replaces any prior active reset link. The token is returned only on issuance.
+      parameters:
+        - $ref: '#/components/parameters/AdminUserId'
+      responses:
+        '201':
+          description: The one-time token and its expiry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PasswordResetIssuedResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/SessionRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /admin/audit:
+    get:
+      operationId: listAdminAudit
+      tags: [Admin]
+      summary: List recorded account administration actions, most recent first
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of successful administrative changes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminAuditListResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/SessionRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
   /drive/search:
     get:
       operationId: searchDrive
@@ -325,6 +575,38 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /folders/{folderId}/download:
+    get:
+      operationId: downloadFolderArchive
+      tags: [Folders]
+      summary: Download an authorized folder tree as ZIP
+      description: Includes active descendants, ready files and empty folders. Stops the download if an object becomes unavailable or permission is lost while streaming.
+      parameters:
+        - $ref: '#/components/parameters/FolderUuid'
+      responses:
+        '200':
+          description: ZIP archive with safe Unicode archive paths.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateCache'
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: ARCHIVE_TOO_LARGE. Choose a smaller folder (up to 500 files, 500 folders and 100 MiB of file content).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /files:
     post:
       operationId: uploadFile
@@ -479,6 +761,55 @@ paths:
         '503':
           $ref: '#/components/responses/StorageUnavailable'
 
+  /files/{fileId}/preview:
+    get:
+      operationId: previewFile
+      tags: [Files]
+      summary: Read supported content for a private preview
+      description: Checks the current file read permission. Returns raster images, PDF or UTF-8 plain text only. Responses are private and use a sandbox content-security policy. Limits are 512 KiB for text and 10 MiB otherwise.
+      parameters:
+        - $ref: '#/components/parameters/FileId'
+      responses:
+        '200':
+          description: Validated preview bytes.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateCache'
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+            image/gif:
+              schema: { type: string, format: binary }
+            application/pdf:
+              schema: { type: string, format: binary }
+            text/plain:
+              schema: { type: string }
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: PREVIEW_TOO_LARGE. Download remains available if permitted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '415':
+          description: PREVIEW_UNSUPPORTED. Download remains available if permitted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
   /files/{fileId}/trash:
     post:
       operationId: trashFile
@@ -698,6 +1029,37 @@ paths:
           $ref: '#/components/responses/SessionRequired'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /shared-by-me:
+    get:
+      operationId: listOutgoingShares
+      tags: [Sharing]
+      summary: List direct grants issued by the current account
+      description: Returns grants on active resources owned by the account. Includes expired grants unless filtered. Multiple recipient grants for an item have separate rows. Sorts by newest grantedAt, kind, resource ID and recipient ID.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: type
+          in: query
+          schema: { type: string, enum: [all, files, folders], default: all }
+        - name: status
+          in: query
+          schema: { type: string, enum: [all, active, expired], default: all }
+      responses:
+        '200':
+          description: A page of outgoing grants.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/PrivateCache'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutgoingSharesResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
         '500':
           $ref: '#/components/responses/InternalError'
   /files/{fileId}/shares:
@@ -982,6 +1344,11 @@ components:
       description: Server-issued opaque session value for the same-origin browser.
 
   parameters:
+    AdminUserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     FolderId:
       name: folderId
       in: path
@@ -1031,6 +1398,49 @@ components:
         enum: ['private, no-store']
 
   responses:
+    AccountProfile:
+      description: The current profile and storage use.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateCache'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AccountProfileResponse' }
+    PasswordChanged:
+      description: The password changed and the account's sessions were invalidated.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateCache'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PasswordChangedResponse' }
+    AccountConflict:
+      description: >-
+        The link was already used or revoked (ACCOUNT_LINK_USED, ACCOUNT_LINK_REVOKED), the email is already registered
+        (ACCOUNT_EMAIL_CONFLICT), the quota is below storage already used (QUOTA_BELOW_USAGE), or this is the last active
+        administrator (LAST_ACTIVE_ADMIN).
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateCache'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    AccountLinkNotFound:
+      description: The link does not exist or is for a different operation (ACCOUNT_LINK_NOT_FOUND).
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateCache'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    AccountLinkExpired:
+      description: The link has expired (ACCOUNT_LINK_EXPIRED).
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/PrivateCache'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
     FolderMutationConflict:
       description: >-
         FOLDER_NAME_CONFLICT indicates an exact duplicate name in the destination.
@@ -1262,7 +1672,7 @@ components:
           minLength: 1
     User:
       type: object
-      required: [id, email, name]
+      required: [id, email, name, role]
       properties:
         id:
           type: string
@@ -1272,6 +1682,8 @@ components:
           format: email
         name:
           type: string
+        role:
+          $ref: '#/components/schemas/AccountRole'
     UserResponse:
       type: object
       required: [success, data]
@@ -1280,6 +1692,202 @@ components:
           $ref: '#/components/schemas/Success'
         data:
           $ref: '#/components/schemas/User'
+    AccountRole:
+      type: string
+      enum: [user, admin]
+    AccountName:
+      type: string
+      minLength: 1
+      maxLength: 120
+    AccountPassword:
+      type: string
+      format: password
+      minLength: 12
+      maxLength: 1024
+    AccountLinkToken:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{43}$'
+    StorageBytes:
+      type: integer
+      format: int64
+      minimum: 0
+      maximum: 9007199254740991
+    AcceptInviteRequest:
+      type: object
+      additionalProperties: false
+      required: [token, password, name]
+      properties:
+        token: { $ref: '#/components/schemas/AccountLinkToken' }
+        password: { $ref: '#/components/schemas/AccountPassword' }
+        name: { $ref: '#/components/schemas/AccountName' }
+    ResetPasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [token, password]
+      properties:
+        token: { $ref: '#/components/schemas/AccountLinkToken' }
+        password: { $ref: '#/components/schemas/AccountPassword' }
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [currentPassword, password]
+      properties:
+        currentPassword: { type: string, format: password, minLength: 1, maxLength: 1024 }
+        password: { $ref: '#/components/schemas/AccountPassword' }
+    UpdateAccountRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { $ref: '#/components/schemas/AccountName' }
+    AccountStorage:
+      type: object
+      required: [usedBytes, trashedBytes, quotaBytes]
+      properties:
+        usedBytes: { $ref: '#/components/schemas/StorageBytes' }
+        trashedBytes: { $ref: '#/components/schemas/StorageBytes' }
+        quotaBytes: { $ref: '#/components/schemas/StorageBytes' }
+    AccountProfileResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { $ref: '#/components/schemas/Success' }
+        data:
+          type: object
+          required: [user, storage]
+          properties:
+            user: { $ref: '#/components/schemas/User' }
+            storage: { $ref: '#/components/schemas/AccountStorage' }
+    PasswordChangedResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { $ref: '#/components/schemas/Success' }
+        data:
+          type: object
+          required: [passwordChanged]
+          properties:
+            passwordChanged: { type: boolean, enum: [true] }
+    CreateInviteRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+    AccountInvite:
+      type: object
+      required: [id, email, status, createdAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        status: { type: string, enum: [active, expired, used, revoked] }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    AccountInviteListResponse:
+      type: object
+      required: [success, data, pagination]
+      properties:
+        success: { $ref: '#/components/schemas/Success' }
+        data:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/AccountInvite' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+    AccountInviteIssuedResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { $ref: '#/components/schemas/Success' }
+        data:
+          type: object
+          required: [invite, token]
+          properties:
+            invite: { $ref: '#/components/schemas/AccountInvite' }
+            token: { $ref: '#/components/schemas/AccountLinkToken' }
+    RevokedResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { $ref: '#/components/schemas/Success' }
+        data:
+          type: object
+          required: [revoked]
+          properties:
+            revoked: { type: boolean, enum: [true] }
+    AdminUser:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          required: [disabled, quotaBytes, usedBytes]
+          properties:
+            disabled: { type: boolean }
+            quotaBytes: { $ref: '#/components/schemas/StorageBytes' }
+            usedBytes: { $ref: '#/components/schemas/StorageBytes' }
+    UpdateAdminUserRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        role: { $ref: '#/components/schemas/AccountRole' }
+        disabled: { type: boolean }
+        quotaBytes: { $ref: '#/components/schemas/StorageBytes' }
+    AdminUserResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { $ref: '#/components/schemas/Success' }
+        data: { $ref: '#/components/schemas/AdminUser' }
+    AdminUserListResponse:
+      type: object
+      required: [success, data, pagination]
+      properties:
+        success: { $ref: '#/components/schemas/Success' }
+        data:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/AdminUser' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+    PasswordResetIssuedResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { $ref: '#/components/schemas/Success' }
+        data:
+          type: object
+          required: [token, expiresAt]
+          properties:
+            token: { $ref: '#/components/schemas/AccountLinkToken' }
+            expiresAt: { type: string, format: date-time }
+    AdminAuditEntry:
+      type: object
+      required: [id, actorId, actorEmail, action, targetId, targetEmail, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        actorId: { type: string, format: uuid }
+        actorEmail: { type: string, format: email }
+        action: { type: string }
+        targetId: { type: string, format: uuid, nullable: true }
+        targetEmail: { type: string, format: email, nullable: true }
+        createdAt: { type: string, format: date-time }
+    AdminAuditListResponse:
+      type: object
+      required: [success, data, pagination]
+      properties:
+        success: { $ref: '#/components/schemas/Success' }
+        data:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/AdminAuditEntry' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
     FolderReference:
       type: string
       pattern: '^(root|[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})$'
@@ -1732,6 +2340,29 @@ components:
         isActive:
           type: boolean
           description: Whether the grant is valid at the time the response was generated.
+    OutgoingSharesResponse:
+      type: object
+      required: [success, data, pagination]
+      properties:
+        success:
+          $ref: '#/components/schemas/Success'
+        data:
+          type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                type: object
+                required: [kind, resourceId, resourceName, grant]
+                properties:
+                  kind: { type: string, enum: [file, folder] }
+                  resourceId: { type: string, format: uuid }
+                  resourceName: { type: string }
+                  grant:
+                    $ref: '#/components/schemas/ShareGrant'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
     FileShareResponse:
       type: object
       required: [success, data]

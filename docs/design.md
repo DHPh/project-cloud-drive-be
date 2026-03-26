@@ -8,6 +8,18 @@ Cookie phiên là giá trị ngẫu nhiên. PostgreSQL lưu SHA-256 của giá t
 
 Cookie có `HttpOnly`, `SameSite=Lax` và `Path=/`. Đăng nhập cấp phiên mới và thu hồi phiên từ cookie gửi kèm trong cùng transaction. Đăng xuất xóa phiên tương ứng. [Thao tác phiên và mã lỗi](contracts/README.md#drive-01)
 
+## Tài khoản và quản trị
+
+Migration `AddAccountAdministration1765497600000` thêm vai trò `user`/`admin` và `disabled_at` vào `users`. Tài khoản hiện có giữ email, mật khẩu, phiên hợp lệ và quota. Vai trò mặc định là `user`. Quota mặc định cho tài khoản mới là 1 GiB. API đăng nhập và đọc phiên trả vai trò hiện tại. Đăng nhập kiểm tra lại hash và trạng thái dưới khóa dòng tài khoản trước khi cấp phiên để loại phiên tạo từ mật khẩu cũ lúc đặt lại đồng thời.
+
+Admin đầu tiên được tạo bằng `node dist/bootstrap-admin.js` với `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_NAME` và `BOOTSTRAP_ADMIN_PASSWORD` do người vận hành cấp. Lệnh từ chối tạo nếu đã có admin và giữ bí mật ngoài tham số, log và mã nguồn. Lệnh không cần kết nối MinIO. Các thao tác quản trị thay đổi dữ liệu cùng dùng khóa giao dịch quản trị để bảo vệ admin hoạt động cuối cùng. Khóa tài khoản và đổi vai trò thu hồi phiên. Mở khóa yêu cầu đăng nhập mới.
+
+Link mời hết hạn sau 24 giờ. Link đặt lại mật khẩu hết hạn sau 30 phút. PostgreSQL chỉ lưu SHA-256 của token, loại và mốc hết hạn, được sử dụng hay thu hồi. Khi cấp lại, thu hồi link đang hiệu lực cũ trong cùng phạm vi. Giao dịch nhận link kiểm tra lại trạng thái dưới khóa dòng, chỉ ghi `used_at` cùng lúc thay đổi tài khoản thành công. Reset giữ trạng thái khóa hiện tại và thu hồi tất cả phiên của tài khoản đích. Đổi mật khẩu của chính mình cần xác thực mật khẩu hiện tại, rồi thu hồi tất cả phiên và link đặt lại mật khẩu đang hiệu lực. Frontend xây link có token trong fragment, gửi token bằng JSON cùng origin khi xác nhận. API chỉ trả token tại thời điểm phát hành.
+
+Tài khoản đã khóa bị từ chối đăng nhập và đọc phiên. Truy vấn đọc metadata, download, preview, thư mục, danh sách nhận chia sẻ và ZIP kiểm tra trạng thái chủ tài nguyên trong cùng phép đọc. Khi mở khóa, grant còn hạn hoạt động trở lại. Số liệu Thùng rác và lịch dọn vẫn theo vòng đời hiện có. Admin dùng nhóm API riêng cho trạng thái, lời mời, reset, quota và nhật ký. Quyền admin không cấp quyền đọc dữ liệu Drive riêng. Nhật ký ghi thao tác thành công cùng tài khoản đích hoặc email đã được dùng để mời, giữ token, mật khẩu và nội dung tệp ngoài log.
+
+Trang tài khoản dùng `used_bytes` cho tổng đã tính và cộng mỗi tệp trong Thùng rác một lần. Quota thấp hơn số byte đang tính bị từ chối. Triển khai migration rồi cập nhật mọi tiến trình backend trước khi bật quản trị tài khoản. Backend trước `0.11.0` thiếu kiểm tra tài khoản khóa và không được phục vụ dữ liệu đã khóa. [Hợp đồng ACCOUNT-01 và ADMIN-01](contracts/README.md#account-01-và-admin-01)
+
 ## Danh sách Drive
 
 `root` biểu thị thư mục gốc của tài khoản. Các mục trực thuộc gốc có cột cha bằng `NULL`. Foreign key ghép ID thư mục và ID chủ sở hữu để giữ quan hệ tệp và thư mục con trong cùng cây. Truy vấn duyệt áp quyền và trạng thái trước khi lọc tên của con trực tiếp, đếm và phân trang. Danh sách sắp thư mục trước tệp, rồi theo tên chữ thường và ID. Dùng [đường biên SHARE-02](#kế-thừa-quyền-thư-mục) khi trả breadcrumb cho người nhận.
@@ -66,6 +78,10 @@ Migration `AddFolderDescription1765411200000` thêm cột `folders.description` 
 
 Thứ tự nâng cấp là migration, backend rồi frontend đồng bộ contract. Khi quay lui backend sau khi đã nhập mô tả, giữ cột nullable để bảo toàn dữ liệu và xác nhận tương thích của bản chạy lại. `down()` của migration bỏ cột và dữ liệu mô tả đi cùng cột. [Hợp đồng DRIVE-03](contracts/README.md#drive-03) · [Kiểm chứng backend](verification.md)
 
+## Tải thư mục dạng ZIP
+
+`GET /folders/{folderId}/download` xác định quyền đọc và chụp danh sách cây đang hoạt động trong một truy vấn PostgreSQL. Gói giữ thư mục rỗng và tên Unicode. Mã hóa ký tự phân tách hoặc tên đặc biệt thành một đoạn an toàn. Tên trùng được phân biệt theo thứ tự ổn định. Kiểm tra số mục và byte trước khi mở luồng. Mỗi tệp được xác thực lại bằng luồng tải xuống hiện có khi lấy nội dung. Nếu mất quyền hoặc thiếu object trong lúc đóng gói, hủy luồng thay vì trả gói thiếu.
+
 ## Tìm toàn Drive và Dòng thời gian
 
 DRIVE-04 giữ tìm theo tên các mục con trực tiếp. Các truy vấn mới áp chủ sở hữu và trạng thái hoạt động trước khi đếm và phân trang. Tìm toàn Drive dùng đối chiếu chuỗi theo tên và tùy chọn đối chiếu mô tả, thẻ tệp. Chỉ dựng breadcrumb cho các mục trong trang kết quả, trong cây hoạt động của tài khoản. Thứ tự có ID làm mốc phụ.
@@ -75,6 +91,12 @@ Dòng thời gian đọc tệp hoàn tất upload theo `created_at` mới trư�
 ## Xem trước nội dung tệp
 
 `GET /files/{fileId}/preview` kiểm tra quyền đọc và trạng thái đang hoạt động giống trang chi tiết. Xem trước dùng định dạng cố định từ allowlist gồm JPEG, PNG, WebP, GIF, PDF và văn bản UTF-8. Kiểm tra chữ ký của ảnh/PDF trước khi trả. Văn bản được giải mã UTF-8 và trả dạng `text/plain`. Phản hồi dùng `private, no-store`, `nosniff` và sandbox cho nội dung mở trong frame. Tệp vượt giới hạn hoặc sai định dạng vẫn đi qua luồng tải xuống hiện có với cùng kiểm tra quyền.
+
+## Quyền chỉnh sửa được chia sẻ
+
+Quyền cấp trực tiếp có mức `viewer` hoặc `editor`. Các quyền hiện có nhận mức `viewer`. Quyền hiệu lực là mức cao nhất từ quyền trực tiếp và quyền kế thừa còn hạn. Vai trò chủ vẫn được xác định theo sở hữu. Kiểm tra quyền ghi dưới cùng khóa cây của chủ với thay đổi quyền và vòng đời thư mục.
+
+Người sửa có thể đổi tên, mô tả và thẻ tệp. Trong thư mục được sửa, họ có thể sửa mô tả và tải tệp lên. Tệp mới thuộc chủ thư mục và giữ chỗ quota của chủ. Khi hoàn tất upload, kiểm tra lại quyền hiện hành trước khi chuyển `ready`. Nếu mất quyền, chuyển bản ghi sang dọn lỗi và dùng cơ chế đối soát để giải phóng quota sau khi xóa object. Đổi vị trí, vòng đời, cấp quyền và công bố thuộc chủ.
 
 ## Kế thừa quyền thư mục
 
@@ -89,6 +111,14 @@ Lệnh `node dist/cli.js audit` đọc metadata PostgreSQL và danh sách object
 Tệp `ready` kể cả đã đưa vào Thùng rác vẫn phải có object, trừ tệp đã được đưa vào hàng đợi xóa vĩnh viễn. Đếm riêng object khớp bản ghi `pending`, `cleanup` và hàng đợi xóa để giữ đúng trạng thái chuyển tiếp. Object chưa có bản ghi quá khoảng chờ `UPLOAD_RECOVERY_AGE_SECONDS` là ứng viên mồ côi cần xác minh. Object mới hoặc thiếu mốc thời gian được đếm riêng. Bản ghi với key ngoài namespace là một loại lệch khác. Tổng quota đã tính cần bằng tổng `size_bytes` của mọi bản ghi tệp còn lưu, gồm upload đang chờ, dọn upload lỗi, Thùng rác và xóa vĩnh viễn đang xử lý.
 
 Báo cáo JSON có ID và thời điểm chạy, bộ đếm đã quét và mẫu dùng mã băm để đối chiếu. Dung lượng dạng chuỗi thập phân để giữ chính xác `bigint`. Mã thoát `0` là đã quét xong và chưa thấy lệch cần xác minh. Mã `2` là đã quét xong và có lệch. Lỗi kết nối, phân trang hoặc truy vấn trả mã `1` và báo lỗi tổng quát. Kết quả tới từ hai hệ thống trong cùng một lần quét. Đối chiếu lại trong cửa sổ dừng ghi trước khi kết luận về mục lệch. [Runbook đối soát, backup và phục hồi](operations.md)
+
+## Board công khai BOARD-01
+
+Board lưu chủ sở hữu, ID thao tác riêng, ID công khai, tiêu đề, mô tả, chế độ `draft`, `link` hoặc `discoverable` và mốc ẩn do admin. Mục lưu ID riêng, tệp, vị trí, cờ `published` và `allow_download`. Board mới ở `draft`. Mục mới giữ hai cờ ở `false` cho tới khi chủ bật tương ứng. Một tệp chỉ xuất hiện một lần trong cùng board. Giới hạn số mục và phân trang giữ kích thước phản hồi có giới hạn.
+
+Giao dịch ghi dùng khóa cây theo chủ trước khi kiểm tra board và tệp. Chỉ tệp đang hoạt động thuộc chủ được thêm hoặc công bố. Migration có trigger trên lần đưa tệp và thư mục vào Thùng rác để gỡ công bố mục trong cùng giao dịch. Khôi phục giữ cờ công bố ở trạng thái đã gỡ. Xóa metadata tệp dọn tham chiếu bằng foreign key. Admin ẩn board qua thao tác riêng ghi nhật ký. Khóa chủ sở hữu chặn đọc công khai trong lúc tài khoản bị khóa. Dấu kiểm duyệt tồn tại độc lập với chế độ do chủ chọn.
+
+Mỗi lần đọc công khai kiểm tra chế độ board, mốc ẩn, chủ sở hữu hoạt động và trạng thái hiện tại của mục và tệp. Khám phá chỉ liệt kê `discoverable`. Bản tóm tắt công khai gồm ID công khai, tiêu đề, mô tả và thông tin mục được phát hành. Dùng ID mục trên board để truy cập nội dung. Xem trước trả đoạn UTF-8 có giới hạn dưới dạng dữ liệu text JSON. Định dạng khác hiện thông tin mục và thao tác tải theo quyền. Luồng tải bản gốc kiểm tra `allow_download` rồi stream từ backend với tên Unicode. [Kiểm chứng](verification.md)
 
 ## Migration và kiểm thử
 

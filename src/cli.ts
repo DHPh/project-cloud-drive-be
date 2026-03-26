@@ -4,10 +4,11 @@ import { reportFailure } from './errors';
 import { createFiles } from './files';
 import { createObjectStorage } from './object-storage';
 import { seedDrive } from './seed';
+import { auditStorage } from './storage-audit';
 
 async function run(command: string | undefined): Promise<void> {
-  if (!command || !['migrate', 'seed', 'reconcile'].includes(command)) {
-    throw new Error('Expected a migrate, seed, or reconcile command');
+  if (!command || !['migrate', 'seed', 'reconcile', 'audit'].includes(command)) {
+    throw new Error('Expected a migrate, seed, reconcile, or audit command');
   }
   if (command === 'seed' && process.env.NODE_ENV === 'production') {
     throw new Error('Synthetic fixture setup is disabled in production');
@@ -23,7 +24,11 @@ async function run(command: string | undefined): Promise<void> {
     const storage = createObjectStorage(storageConfig());
     try {
       const age = recoveryAgeMs();
-      if (command === 'seed') {
+      if (command === 'audit') {
+        const report = await auditStorage(db, storage, age);
+        console.log(JSON.stringify(report));
+        if (Object.values(report.findings).some(count => count > 0)) process.exitCode = 2;
+      } else if (command === 'seed') {
         await storage.ensureDevelopmentBucket();
         await seedDrive(db, storage, age, process.env.DEMO_PASSWORD || 'CloudDrive-Demo-2025!');
         console.log('Synthetic Drive fixtures are ready');
@@ -40,7 +45,9 @@ async function run(command: string | undefined): Promise<void> {
   }
 }
 
-run(process.argv[2]).catch((error: unknown) => {
-  reportFailure('Backend maintenance command failed', error);
+const command = process.argv[2];
+run(command).catch((error: unknown) => {
+  if (command === 'audit') console.error('Storage audit failed to complete');
+  else reportFailure('Backend maintenance command failed', error);
   process.exitCode = 1;
 });

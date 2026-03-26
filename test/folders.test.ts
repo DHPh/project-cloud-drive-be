@@ -89,6 +89,7 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
     'AddFolderTrash1765238400000',
     'AddTrashPurge1765324800000',
     'AddFolderDescription1765411200000',
+    'AddAccountAdministration1765497600000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'),

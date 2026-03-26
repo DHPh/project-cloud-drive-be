@@ -8,6 +8,7 @@ import { AddFolderShares1765152000000 } from './migrations/1765152000000-AddFold
 import { AddFolderTrash1765238400000 } from './migrations/1765238400000-AddFolderTrash';
 import { AddTrashPurge1765324800000 } from './migrations/1765324800000-AddTrashPurge';
 import { AddFolderDescription1765411200000 } from './migrations/1765411200000-AddFolderDescription';
+import { AddAccountAdministration1765497600000 } from './migrations/1765497600000-AddAccountAdministration';
 
 export function createDatabase(url: string): DataSource {
   return new DataSource({
@@ -24,6 +25,7 @@ export function createDatabase(url: string): DataSource {
       AddFolderTrash1765238400000,
       AddTrashPurge1765324800000,
       AddFolderDescription1765411200000,
+      AddAccountAdministration1765497600000,
     ],
     extra: { connectionTimeoutMillis: 5000, statement_timeout: 10000 },
   });

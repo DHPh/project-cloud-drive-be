@@ -13,11 +13,27 @@ export const fileNameSchema = z.string().min(1).max(255).refine(isFileName);
 export const mimeTypeSchema = z.string().regex(/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i).max(255);
 
 const emailSchema = z.email().max(254).transform((value) => value.toLowerCase());
+const currentPasswordSchema = z.string().min(1).refine((value) => [...value].length <= 1024);
+const newPasswordSchema = currentPasswordSchema.refine((value) => isDbText(value) && [...value].length >= 12);
+const accountNameSchema = z.string().trim().min(1).refine((value) => isDbTextWithin(value, 120));
+const accountLinkSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 
 export const loginSchema = z.strictObject({
   email: emailSchema,
-  password: z.string().min(1).max(1024),
+  password: currentPasswordSchema,
 });
+
+export const accountProfileSchema = z.strictObject({ name: accountNameSchema });
+export const changePasswordSchema = z.strictObject({ currentPassword: currentPasswordSchema, password: newPasswordSchema });
+export const acceptInviteSchema = z.strictObject({ token: accountLinkSchema, password: newPasswordSchema, name: accountNameSchema });
+export const resetPasswordSchema = z.strictObject({ token: accountLinkSchema, password: newPasswordSchema });
+export const createInviteSchema = z.strictObject({ email: emailSchema });
+export const bootstrapAdminSchema = z.strictObject({ email: emailSchema, name: accountNameSchema, password: newPasswordSchema });
+export const updateAdminUserSchema = z.strictObject({
+  quotaBytes: z.int().nonnegative().optional(),
+  role: z.enum(['user', 'admin']).optional(),
+  disabled: z.boolean().optional(),
+}).refine((value) => Object.keys(value).length > 0);
 
 function positiveInteger(max = Number.MAX_SAFE_INTEGER) {
   return z.string().regex(/^\d+$/).transform(Number).pipe(z.int().min(1).max(max));
@@ -26,6 +42,14 @@ function positiveInteger(max = Number.MAX_SAFE_INTEGER) {
 export const paginationQuerySchema = z.strictObject({
   page: positiveInteger().default(1),
   limit: positiveInteger(100).default(20),
+});
+
+export const adminInviteQuerySchema = paginationQuerySchema.extend({
+  status: z.enum(['all', 'active', 'expired', 'used', 'revoked']).default('all'),
+});
+
+export const adminUserQuerySchema = paginationQuerySchema.extend({
+  q: z.string().refine((value) => isDbTextWithin(value, 255)).transform((value) => value.trim()).default(''),
 });
 
 export const trashQuerySchema = paginationQuerySchema.extend({
@@ -41,11 +65,18 @@ export const folderQuerySchema = paginationQuerySchema.extend({
   type: z.enum(['all', 'folders']).default('all'),
 });
 
+const driveItemTypeSchema = z.enum(['all', 'files', 'folders']).default('all');
+
 export const driveSearchQuerySchema = paginationQuerySchema.extend({
   q: z.string().refine((value) => isDbTextWithin(value, 255)).transform((value) => value.trim()).default(''),
   includeMetadata: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
-  type: z.enum(['all', 'files', 'folders']).default('all'),
+  type: driveItemTypeSchema,
   sort: z.enum(['name', 'newest']).default('name'),
+});
+
+export const outgoingShareQuerySchema = paginationQuerySchema.extend({
+  type: driveItemTypeSchema,
+  status: z.enum(['all', 'active', 'expired']).default('all'),
 });
 
 const timelineDateSchema = z.iso.date().refine((date) => !date.startsWith('0000')).optional();
@@ -95,3 +126,8 @@ export type FolderCreate = z.infer<typeof createFolderSchema>;
 export type FolderUpdate = z.infer<typeof updateFolderSchema>;
 export type DriveSearchQuery = z.infer<typeof driveSearchQuerySchema>;
 export type DriveTimelineQuery = z.infer<typeof driveTimelineQuerySchema>;
+export type OutgoingShareQuery = z.infer<typeof outgoingShareQuerySchema>;
+export type AdminInviteQuery = z.infer<typeof adminInviteQuerySchema>;
+export type AdminUserQuery = z.infer<typeof adminUserQuerySchema>;
+export type AdminUserUpdate = z.infer<typeof updateAdminUserSchema>;
+export type BootstrapAdminInput = z.infer<typeof bootstrapAdminSchema>;

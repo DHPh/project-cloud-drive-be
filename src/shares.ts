@@ -2,7 +2,7 @@ import type { DataSource, EntityManager } from 'typeorm';
 import { ApiError, invalidRequest, notFound } from './errors';
 import { fileFields, fileSummary, type FileRow } from './files';
 import { fileParentIsActive, lockFolderTree } from './folder-tree';
-import type { FileShareGrant } from './validation';
+import type { FileShareGrant, OutgoingShareQuery } from './validation';
 
 type Page = { page: number; limit: number };
 type GrantRow = {
@@ -17,6 +17,7 @@ type SharedFileRow = FileRow & { owner_name: string; granted_at: string; expires
 type SharedFolderRow = {
   id: string; name: string; owner_name: string; granted_at: string; expires_at: string;
 };
+type OutgoingShareRow = GrantRow & { kind: 'file' | 'folder'; resource_id: string; resource_name: string };
 
 const shareTargets = {
   file: {
@@ -126,7 +127,7 @@ export async function listSharedFiles(db: DataSource, recipientId: string, { pag
     WITH matching AS NOT MATERIALIZED (
       SELECT ${sharedFileFields}, u.name AS owner_name, s.granted_at, s.expires_at
       FROM file_shares s JOIN files f ON f.id = s.file_id JOIN users u ON u.id = f.owner_id
-      WHERE s.recipient_id = $1 AND s.expires_at > statement_timestamp()
+      WHERE s.recipient_id = $1 AND s.expires_at > statement_timestamp() AND u.disabled_at IS NULL
         AND f.upload_state = 'ready' AND f.trashed_at IS NULL AND ${fileParentIsActive('f')}
     ), page_items AS (
       SELECT * FROM matching ORDER BY granted_at DESC, id LIMIT $2 OFFSET $3::bigint
@@ -155,7 +156,7 @@ export async function listSharedFolders(db: DataSource, recipientId: string, { p
     WITH matching AS NOT MATERIALIZED (
       SELECT f.id, f.name, u.name AS owner_name, s.granted_at, s.expires_at
       FROM folder_shares s JOIN folders f ON f.id = s.folder_id JOIN users u ON u.id = f.owner_id
-      WHERE s.recipient_id = $1 AND s.expires_at > statement_timestamp() AND f.trash_root_id IS NULL
+      WHERE s.recipient_id = $1 AND s.expires_at > statement_timestamp() AND f.trash_root_id IS NULL AND u.disabled_at IS NULL
     ), page_items AS (
       SELECT * FROM matching ORDER BY granted_at DESC, id LIMIT $2 OFFSET $3::bigint
     )
@@ -173,6 +174,43 @@ export async function listSharedFolders(db: DataSource, recipientId: string, { p
         ownerName: folder.owner_name,
         sharedAt: new Date(folder.granted_at).toISOString(),
         expiresAt: new Date(folder.expires_at).toISOString(),
+      })),
+    },
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+}
+
+export async function listOutgoingShares(db: DataSource, ownerId: string, { page, limit, type, status }: OutgoingShareQuery) {
+  const offset = (BigInt(page - 1) * BigInt(limit)).toString();
+  const order = 'granted_at DESC, kind, resource_id, recipient_id';
+  const [result] = await db.query<{ total: string; items: OutgoingShareRow[] }[]>(`
+    WITH owned_grants AS (
+      SELECT 'file' AS kind, f.id AS resource_id, f.original_name AS resource_name,
+        s.recipient_id, s.granted_at, s.expires_at, s.expires_at > statement_timestamp() AS is_active
+      FROM files f JOIN file_shares s ON s.file_id = f.id
+      WHERE f.owner_id = $1 AND f.upload_state = 'ready' AND f.trashed_at IS NULL
+        AND ${fileParentIsActive('f')} AND $4 <> 'folders'
+      UNION ALL
+      SELECT 'folder', f.id, f.name, s.recipient_id, s.granted_at, s.expires_at,
+        s.expires_at > statement_timestamp()
+      FROM folders f JOIN folder_shares s ON s.folder_id = f.id
+      WHERE f.owner_id = $1 AND f.trash_root_id IS NULL AND $4 <> 'files'
+    ), matching AS NOT MATERIALIZED (
+      SELECT g.*, u.email AS recipient_email, u.name AS recipient_name
+      FROM owned_grants g JOIN users u ON u.id = g.recipient_id
+      WHERE $5 = 'all' OR g.is_active = ($5 = 'active')
+    ), page_items AS (
+      SELECT * FROM matching ORDER BY ${order} LIMIT $2 OFFSET $3::bigint
+    )
+    SELECT (SELECT count(*) FROM matching) AS total,
+      COALESCE((SELECT jsonb_agg(to_jsonb(p) ORDER BY ${order}) FROM page_items p), '[]') AS items
+  `, [ownerId, limit, offset, type, status]);
+  if (!result) throw new Error('Outgoing shares query returned no summary');
+  const total = Number(result.total);
+  return {
+    data: {
+      items: result.items.map((row) => ({
+        kind: row.kind, resourceId: row.resource_id, resourceName: row.resource_name, grant: grantSummary(row),
       })),
     },
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },

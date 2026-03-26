@@ -25,6 +25,9 @@ Mặc định API ở `http://127.0.0.1:3001`, frontend ở `http://127.0.0.1:30
 
 ## Chạy production
 
+Xem [runbook đối soát, backup và phục hồi](docs/operations.md) để chuẩn bị điểm phục hồi PostgreSQL và MinIO cùng kiểm tra trước khi mở traffic.
+
 - Đặt `NODE_ENV=production` và `APP_ORIGIN` khớp chính xác origin HTTPS mà người dùng mở. Nếu frontend chạy Vercel, proxy `/api/v1` về địa chỉ HTTPS của backend và giữ header `Origin` từ trình duyệt cùng header phản hồi `Set-Cookie`. Trình duyệt gắn cookie phiên với hostname frontend. Môi trường preview dùng backend được cấu hình cho origin preview tương ứng.
 - Cấp PostgreSQL và bucket MinIO private trước khi chạy app. Cấp các biến kết nối qua cấu hình triển khai riêng. Chạy `npm ci` và `npm run build` để chuẩn bị bản phát hành. Chạy `node dist/cli.js migrate` một lần với biến môi trường của release, rồi dùng `npm start` để phục vụ request. Dùng seed trên môi trường phát triển.
 - Kiểm tra `/health` và thử đăng nhập, upload, tải xuống qua origin frontend sau rollout. Xác minh kích thước tệp được hỗ trợ qua proxy thật trước khi công bố cho người dùng. [Kiểm chứng và bàn giao](docs/verification.md)
+- Tạo admin đầu tiên một lần bằng `node dist/bootstrap-admin.js` với `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_NAME` và `BOOTSTRAP_ADMIN_PASSWORD` cấp trong cấu hình riêng của môi trường. Kiểm tra đăng nhập bằng tài khoản đó rồi gỡ cấu hình dành cho bootstrap. Admin cấp lời mời sử dụng một lần để tạo các tài khoản tiếp theo. [Quy trình vận hành](docs/operations.md)

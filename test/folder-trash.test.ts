@@ -104,6 +104,7 @@ test('TRASH-02 restores a private batch, retains separate deletions, and resolve
   await db.initialize();
   assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
     'AddFolderTrash1765238400000', 'AddTrashPurge1765324800000', 'AddFolderDescription1765411200000',
+    'AddAccountAdministration1765497600000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'),
@@ -269,7 +270,9 @@ test('TRASH-02 restores a private batch, retains separate deletions, and resolve
   await db.undoLastMigration();
   await db.undoLastMigration();
   await db.undoLastMigration();
+  await db.undoLastMigration();
   assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
     'AddFolderTrash1765238400000', 'AddTrashPurge1765324800000', 'AddFolderDescription1765411200000',
+    'AddAccountAdministration1765497600000',
   ]);
 });

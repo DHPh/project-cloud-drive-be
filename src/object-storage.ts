@@ -4,6 +4,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
   S3ServiceException,
@@ -14,6 +15,12 @@ export interface ObjectStorage {
   put(key: string, bytes: Buffer, mimeType: string): Promise<void>;
   read(key: string): Promise<Readable>;
   remove(key: string): Promise<void>;
+}
+
+export type InventoryObject = { key: string; lastModified?: Date };
+
+export interface ObjectInventory {
+  listObjectPages(prefix: string, pageSize: number): AsyncIterable<InventoryObject[]>;
 }
 
 const requestTimeoutMs = 25000;
@@ -61,6 +68,29 @@ export function createObjectStorage(config: ReturnType<typeof storageConfig>) {
       if (result.DeleteMarker) throw new Error('Object storage created a delete marker instead of removing the object');
     },
 
+    async *listObjectPages(prefix: string, pageSize: number): AsyncGenerator<InventoryObject[]> {
+      let token: string | undefined;
+      for (;;) {
+        const result = await client.send(new ListObjectsV2Command({
+          Bucket: config.bucket,
+          Prefix: prefix,
+          MaxKeys: pageSize,
+          ContinuationToken: token,
+        }), { abortSignal: AbortSignal.timeout(requestTimeoutMs) });
+        const objects = (result.Contents ?? []).map(({ Key, LastModified }) => {
+          if (Key === undefined) throw new Error('Object inventory entry has no key');
+          return { key: Key, lastModified: LastModified };
+        });
+        const next = result.NextContinuationToken;
+        if (result.IsTruncated && (!next || next === token || !objects.length)) {
+          throw new Error('Object inventory has an invalid continuation page');
+        }
+        yield objects;
+        if (!result.IsTruncated) return;
+        token = next;
+      }
+    },
+
     async ensureDevelopmentBucket(): Promise<void> {
       try {
         await client.send(
@@ -79,5 +109,5 @@ export function createObjectStorage(config: ReturnType<typeof storageConfig>) {
     close(): void {
       client.destroy();
     },
-  } satisfies ObjectStorage & { ensureDevelopmentBucket(): Promise<void>; close(): void };
+  } satisfies ObjectStorage & ObjectInventory & { ensureDevelopmentBucket(): Promise<void>; close(): void };
 }
