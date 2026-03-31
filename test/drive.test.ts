@@ -23,6 +23,14 @@ test('production requires a matching HTTPS origin and Secure cookie', () => {
   assert.equal(appConfig({ NODE_ENV: 'production', APP_ORIGIN: 'https://drive.example.test' }).secureCookie, true);
 });
 
+test('proxy trust requires explicit valid IPs or non-global CIDRs', () => {
+  assert.deepEqual(appConfig({}).trustedProxyRanges, []);
+  assert.deepEqual(appConfig({ TRUSTED_PROXY_RANGES: ' 192.0.2.4, 2001:db8::/64 ' }).trustedProxyRanges, ['192.0.2.4', '2001:db8::/64']);
+  for (const value of ['true', '0.0.0.0/0', '::/0', '127.0.0.1/33', '127.0.0.1/8/8']) {
+    assert.throws(() => appConfig({ TRUSTED_PROXY_RANGES: value }), /TRUSTED_PROXY_RANGES/);
+  }
+});
+
 test('attachment disposition keeps an exact name for ASCII and Unicode', () => {
   assert.equal(
     attachmentHeader('Report 1.txt'),
@@ -46,7 +54,7 @@ test('DRIVE-01 HTTP contract and storage transitions on PostgreSQL', { skip: !te
   db.setOptions({ schema, extra: { options: '-c search_path=' + schema, statement_timeout: 10000 } });
   await db.initialize();
   t.after(async () => { await db.destroy(); });
-  assert.equal((await db.runMigrations()).length, 9);
+  assert.equal((await db.runMigrations()).length, 11);
   assert.equal((await db.runMigrations()).length, 0);
 
   const owner = randomUUID();
@@ -67,7 +75,7 @@ test('DRIVE-01 HTTP contract and storage transitions on PostgreSQL', { skip: !te
 
   const objects = new Map<string, Buffer>();
   let failWrite = false;
-  let failRemove = false;
+  const failingRemovals = new Set<string>();
   const storage: ObjectStorage = {
     async put(key, bytes) {
       objects.set(key, bytes);
@@ -79,7 +87,7 @@ test('DRIVE-01 HTTP contract and storage transitions on PostgreSQL', { skip: !te
       return Readable.from([bytes]);
     },
     async remove(key) {
-      if (failRemove) throw new Error('Simulated storage outage');
+      if (failingRemovals.has(key)) throw new Error('Simulated storage outage');
       objects.delete(key);
     },
   };
@@ -208,13 +216,43 @@ test('DRIVE-01 HTTP contract and storage transitions on PostgreSQL', { skip: !te
   assert.ok(interrupted && objects.has(interrupted.object_key));
   const files = createFiles(db, storage, config.uploadRecoveryAgeMs);
   assert.deepEqual(await files.reconcile(), { removed: 0, failed: 0 });
-  await db.query("UPDATE files SET updated_at = now() - interval '2 minutes' WHERE object_key = $1", [interrupted.object_key]);
-  failRemove = true;
-  assert.deepEqual(await files.reconcile(), { removed: 0, failed: 1 });
-  failRemove = false;
-  assert.deepEqual(await files.reconcile(), { removed: 1, failed: 0 });
+
+  // Fill the worker's first batch with failures and put one healthy cleanup item after it.
+  const oldest = Array.from({ length: 24 }, () => randomUUID());
+  const newer = randomUUID();
+  const newerKey = 'files/' + newer;
+  for (const id of [...oldest, newer]) objects.set('files/' + id, Buffer.from('x'));
+  const retryKeys = [interrupted.object_key, ...oldest.map((id) => 'files/' + id)];
+  for (const key of retryKeys) failingRemovals.add(key);
+  await db.transaction(async (manager) => {
+    await manager.query('UPDATE users SET used_bytes = used_bytes + $2 WHERE id = $1', [owner, oldest.length + 1]);
+    await manager.query(`
+      INSERT INTO files (id, owner_id, original_name, mime_type, size_bytes, object_key, upload_state, updated_at)
+      SELECT id, $1, 'Cleanup fixture.txt', 'text/plain', 1, 'files/' || id::text, 'cleanup',
+        now() - CASE WHEN id = $2 THEN INTERVAL '2 minutes' ELSE INTERVAL '3 minutes' END
+      FROM unnest($3::uuid[]) fixtures(id)
+    `, [owner, newer, [...oldest, newer]]);
+    await manager.query("UPDATE files SET updated_at = now() - interval '3 minutes' WHERE object_key = $1", [interrupted.object_key]);
+  });
+  const readQuota = () => db.query<{ used_bytes: string }[]>('SELECT used_bytes FROM users WHERE id = $1', [owner]);
+  const [charged] = await readQuota();
+  assert.ok(charged);
+  const bytesBefore = Number(charged.used_bytes);
+  assert.deepEqual(await files.reconcile(), { removed: 0, failed: 25 });
+  assert.ok(retryKeys.every((key) => objects.has(key)));
+  assert.equal(Number((await readQuota())[0]?.used_bytes), bytesBefore);
+
+  const restartedWorker = createFiles(db, storage, config.uploadRecoveryAgeMs);
+  assert.deepEqual(await restartedWorker.reconcile(), { removed: 1, failed: 0 });
+  assert.equal(objects.has(newerKey), false);
+  assert.ok(retryKeys.every((key) => objects.has(key)));
+  assert.equal(Number((await readQuota())[0]?.used_bytes), bytesBefore - 1);
+  failingRemovals.clear();
+  await db.query("UPDATE files SET updated_at = now() - interval '2 minutes' WHERE object_key = ANY($1::text[])", [retryKeys]);
+  assert.deepEqual(await files.reconcile(), { removed: 25, failed: 0 });
   assert.deepEqual(await files.reconcile(), { removed: 0, failed: 0 });
-  assert.equal(objects.has(interrupted.object_key), false);
+  assert.ok(retryKeys.every((key) => !objects.has(key)));
+  assert.equal(Number((await readQuota())[0]?.used_bytes), bytesBefore - 25 - Buffer.byteLength('suspect bytes'));
   const [quota] = await db.query<{ matches: boolean }[]>(`
     SELECT used_bytes = (SELECT COALESCE(sum(size_bytes), 0) FROM files WHERE owner_id = $1) AS matches
     FROM users WHERE id = $1

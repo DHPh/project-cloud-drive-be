@@ -100,7 +100,8 @@ test('SHARE-03 lists only current direct grants on owned resources and honors gr
     assert.equal(response.status, 200);
     return response.json() as Promise<{
       data: { items: { kind: string; resourceId: string; resourceName: string;
-        grant: { recipientId: string; recipientEmail: string; recipientName: string; grantedAt: string; expiresAt: string; isActive: boolean } }[] },
+        grant: { recipientId: string; recipientEmail: string; recipientName: string; grantedAt: string; expiresAt: string;
+          isActive: boolean; access: 'viewer' | 'editor' } }[] },
       pagination: { page: number; limit: number; total: number; totalPages: number },
     }>;
   }
@@ -139,7 +140,7 @@ test('SHARE-03 lists only current direct grants on owned resources and honors gr
   assert.deepEqual(expired.data.items, [{
     kind: 'folder', resourceId: folderId, resourceName: 'Thư mục dùng chung',
     grant: { recipientId: otherId, recipientEmail: 'other@example.test', recipientName: 'Other',
-      grantedAt: grantedAt.toISOString(), expiresAt: expiredAt.toISOString(), isActive: false },
+      grantedAt: grantedAt.toISOString(), expiresAt: expiredAt.toISOString(), isActive: false, access: 'viewer' },
   }]);
   assert.equal((await outgoing('?type=files&status=active')).pagination.total, 1);
   assert.equal((await outgoing('?type=files&status=expired')).pagination.total, 0);

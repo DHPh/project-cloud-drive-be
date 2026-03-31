@@ -10,6 +10,7 @@ Từ repo backend, chạy `npm ci`, `npm run typecheck`, `npm run build` và `np
 | Hợp đồng | Đối chiếu phương thức, schema, phân trang và mã lỗi với [OpenAPI](contracts/openapi.yaml). Đồng bộ schema với frontend khi hành vi đổi. |
 | PostgreSQL và MinIO | Đối soát metadata, object và quota khi upload thành công, chạm quota, hoặc storage lỗi rồi chạy đối soát lại. |
 | OPS-01 | Chạy báo cáo chỉ đọc qua hai trang object và database. Đối chiếu thiếu object `ready`, object mới hoặc nghi mồ côi, trạng thái upload/xóa đang xử lý, quota và mẫu giới hạn. Thử lỗi danh sách storage. Diễn tập [backup và restore](operations.md) trên cặp PostgreSQL và MinIO cách ly. |
+| BOARD-01 | Kiểm tra nháp, link và Khám phá. Đối chiếu DTO công khai, đoạn UTF-8 giới hạn, cờ tải theo mục và quyền admin. Chạy đồng thời công bố lại với đưa cây vào Thùng rác. Xác nhận khôi phục, mở khóa tài khoản và đổi chế độ board giữ đúng trạng thái công bố và kiểm duyệt. |
 | TRASH-01 | Nâng cấp snapshot DRIVE-01, giữ ID/thư mục/object key/quota qua hai chiều và tải lại đúng byte. Kiểm tra quyền giữa hai tài khoản, yêu cầu lặp và việc ẩn tệp trong Drive, tìm kiếm, đổi tên và tải xuống. |
 | SHARE-01 | Dùng chủ tệp, người nhận và tài khoản ngoài phạm vi đã biết. Kiểm tra danh sách, đọc và tải xuống trước/sau khi cấp, hết hạn và thu hồi. Kiểm tra tháng ngắn, yêu cầu lặp và thu hồi toàn bộ khi vào Thùng rác. |
 | DRIVE-02 | Kiểm tra tạo, đổi tên, di chuyển và lọc thư mục trong danh sách. Dùng snapshot SHARE-01 và dữ liệu tổng hợp để xác minh trùng tên, quyền đích, thao tác di chuyển đối nghịch, ID và quyền tải xuống giữ nguyên. |
@@ -27,3 +28,7 @@ Ghi lệnh, kết quả thực tế, tác động API hoặc DB và phần còn 
 - Diễn tập `75e9bc28` dùng hai database và hai bucket private mới. `pg_dump` dạng custom và `pg_restore --exit-on-error` chạy cùng sao lưu và chép lại manifest object. Dump 30.519 byte có SHA-256 `fcded1942903f1cb39832a0b4c40d916b4b2ff0f3b2180b1f79a27f0581673c2`. Giữ đúng key, SHA-256 và 68 byte trên hai object. Quota đã tính và kỳ vọng đều là 68 byte.
 - `node dist/cli.js audit` trả `0` cho cả nguồn và bản phục hồi. Khi thay quota fixture lệch 1 byte, trả `2`. Với bucket fixture thiếu, trả `1` và báo lỗi tổng quát. API ở đích phục hồi giữ quyền của chủ và người nhận, tên tệp Unicode và đúng byte. Tệp trong Thùng rác trả `404` khi tải xuống.
 - Thời gian mẫu cho `pg_dump` cùng sao chép object là 696 ms, và `pg_restore` cùng chép lại object là 391 ms. Các số này thuộc fixture hai tệp. Đo lại trên cấu hình đích bằng [runbook](operations.md).
+
+## Kiểm tra backend BOARD-01
+
+`node --import tsx --test test/boards.test.ts` đạt 1/1 trên PostgreSQL cách ly với object adapter tổng hợp. Ca chạy qua router thật và phiên tài khoản fixture. Kiểm tra trạng thái nháp/link/Khám phá, sắp xếp, phản hồi loại dữ liệu riêng, đoạn UTF-8 giới hạn 4 KiB, tải theo cờ và khóa chủ. Công bố lại đồng thời với đưa cây vào Thùng rác kết thúc ở trạng thái mục bị gỡ công bố. Khôi phục và đổi chế độ board tôn trọng trạng thái đã lưu. Hành động ẩn lặp giữ mốc cũ và một bản ghi nhật ký. Kết quả này dùng cho lớp backend.

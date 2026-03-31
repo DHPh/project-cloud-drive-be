@@ -78,7 +78,7 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
   `, [fileId, recipientId]);
   const snapshotFiles = await previous.query<Record<string, unknown>[]>('SELECT * FROM files ORDER BY id');
   const snapshotFolders = await previous.query<Record<string, unknown>[]>('SELECT * FROM folders ORDER BY id');
-  const snapshotShares = await previous.query('SELECT * FROM file_shares');
+  const snapshotShares = await previous.query<Record<string, unknown>[]>('SELECT * FROM file_shares');
   const snapshotQuota = await previous.query('SELECT id, used_bytes, quota_bytes FROM users ORDER BY id');
   await previous.destroy();
 
@@ -90,6 +90,8 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
     'AddTrashPurge1765324800000',
     'AddFolderDescription1765411200000',
     'AddAccountAdministration1765497600000',
+    'AddEditorGrants1765584000000',
+    'AddPublicBoards1765670400000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'),
@@ -221,6 +223,6 @@ test('DRIVE-02 upgrades SHARE-01 data and makes folder topology changes safely',
 
   assert.deepEqual(await db.query('SELECT * FROM files ORDER BY id'),
     snapshotFiles.map((file) => ({ ...file, trash_event_id: null })));
-  assert.deepEqual(await db.query('SELECT * FROM file_shares'), snapshotShares);
+  assert.deepEqual(await db.query('SELECT * FROM file_shares'), snapshotShares.map((share) => ({ ...share, access: 'viewer' })));
   assert.deepEqual(await db.query('SELECT id, used_bytes, quota_bytes FROM users ORDER BY id'), snapshotQuota);
 });

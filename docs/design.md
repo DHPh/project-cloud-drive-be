@@ -30,6 +30,8 @@ API kiểm tra multipart và quyền thư mục, tăng `used_bytes` có điều 
 
 Lỗi ghi object chuyển bản ghi sang `cleanup` nếu PostgreSQL còn sẵn sàng. Nếu app dừng hoặc DB gián đoạn trước khi hoàn tất, bản ghi `pending` vẫn giữ object key và quota để đối soát. Tác vụ nền hoặc `npm run storage:reconcile` dọn batch tồn đọng sau khoảng `UPLOAD_RECOVERY_AGE_SECONDS` (mặc định 300 giây). Tác vụ giữ thông tin để thử lại khi storage lỗi, và giảm quota cùng lúc xóa bản ghi sau khi storage xác nhận xóa. Tệp đã ở trạng thái `ready` được giữ lại khi mất phản hồi giữa client và API.
 
+Khi MinIO báo lỗi xóa object, tác vụ cập nhật `updated_at` dưới khóa tệp cho bản ghi upload chưa hoàn tất. Bản ghi được thử lại sau `UPLOAD_RECOVERY_AGE_SECONDS` kể từ lần lỗi, để các mục đủ tuổi khác được xử lý trước. Bộ dọn xóa vĩnh viễn giữ lịch thử lại của các tệp đã thuộc hàng đợi riêng.
+
 ## Thùng rác từng tệp
 
 Migration `AddFileTrash1763683200000` bổ sung `trashed_at` cùng ràng buộc chỉ tệp `ready` có thể mang mốc xóa. Drive, tìm kiếm, đổi tên và tải xuống chỉ sử dụng tệp có `trashed_at` bằng `NULL` trong cây đang hoạt động. Danh sách Thùng rác áp quyền chủ sở hữu trước khi đếm và phân trang.
@@ -59,6 +61,12 @@ Dừng backend cũ trước khi chạy migration, rồi lên backend mới và f
 Migration `AddFileShares1764201600000` tạo `file_shares` với khóa chính `(file_id, recipient_id)`. Chủ tệp cấp và thu hồi quyền theo tài khoản. Thông tin và luồng tải xuống kiểm tra tệp hoạt động và quyền của người dùng khi đọc. Danh sách quản lý của chủ có cả grant hết hạn, còn danh sách tệp nhận áp điều kiện hiệu lực của quyền trực tiếp trước khi đếm và phân trang.
 
 Backend lưu mốc hết hạn tuyệt đối. Hạn bỏ trống khi cấp mới được tính theo một tháng lịch Việt Nam. Khi quyền còn hạn, yêu cầu lặp với hạn bỏ trống giữ mốc cũ. Kiểm tra quyền dùng giờ của câu lệnh PostgreSQL. Giao dịch cấp quyền, thu hồi và đưa tệp vào Thùng rác lấy khóa cây theo chủ trước khóa dòng tài nguyên. Đưa vào Thùng rác thu hồi quyền trực tiếp trong cùng giao dịch với đổi trạng thái. Đích khôi phục dùng [quy tắc riêng tư](#kế-thừa-quyền-thư-mục).
+
+## Danh sách quyền đã chia sẻ
+
+SHARE-03 đọc quyền trực tiếp trên các tệp `ready` và thư mục đang hoạt động của chủ. Truy vấn gộp hai bảng quyền và dùng `statement_timestamp()` để xác định hạn. Bộ lọc loại và trạng thái áp trước khi đếm và phân trang. Thứ tự ưu tiên lần cấp quyền mới hơn, rồi loại tài nguyên, ID tài nguyên và ID người nhận. Kết quả có định danh tài nguyên và thông tin quyền đang lưu.
+
+Gia hạn và thu hồi tiếp tục dùng các thao tác chia sẻ tệp hoặc thư mục theo chủ. URL tài nguyên trong nút mở, sao chép và QR đi qua phiên đăng nhập và kiểm tra quyền hiện hành của người mở. [Hợp đồng HTTP](contracts/README.md#share-03-preview-01-và-zip-01)
 
 ## Quản lý thư mục
 
@@ -100,7 +108,7 @@ Người sửa có thể đổi tên, mô tả và thẻ tệp. Trong thư mục
 
 ## Kế thừa quyền thư mục
 
-Migration `AddFolderShares1765152000000` tạo `folder_shares` với khóa chính `(folder_id, recipient_id)` và truy vấn tổ tiên trong cùng cây chủ sở hữu. Quyền xem được tính từ grant trực tiếp và các grant thư mục còn hạn trên chuỗi tổ tiên hiện tại. Duyệt thư mục dùng cùng truy vấn cho quyền, breadcrumb, nội dung và số lượng. Ở đầu phạm vi xem, `parentId` là `null`. Danh sách nhận trực tiếp áp điều kiện hiệu lực theo từng loại tài nguyên. Drive gốc và các thao tác ghi cần quyền chủ sở hữu.
+Migration `AddFolderShares1765152000000` tạo `folder_shares` với khóa chính `(folder_id, recipient_id)` và truy vấn tổ tiên trong cùng cây chủ sở hữu. Quyền xem được tính từ grant trực tiếp và các grant thư mục còn hạn trên chuỗi tổ tiên hiện tại. Duyệt thư mục dùng cùng truy vấn cho quyền, breadcrumb, nội dung và số lượng. Ở đầu phạm vi xem, `parentId` là `null`. Danh sách nhận trực tiếp áp điều kiện hiệu lực theo từng loại tài nguyên. Drive gốc cần quyền chủ sở hữu. Thao tác ghi qua quyền cấp tuân theo [ma trận ACCESS-01](#quyền-chỉnh-sửa-được-chia-sẻ).
 
 Khôi phục tệp kiểm tra quyền còn hạn trên thư mục gốc và các thư mục cha. Nếu vị trí đó đang chia sẻ, cập nhật đích về Drive gốc để tệp trở lại riêng tư. Cấp/thu hồi quyền thư mục, đổi cây và khôi phục dùng chung khóa giao dịch theo chủ sở hữu. File ID, object key và quota giữ nguyên.
 
@@ -119,6 +127,8 @@ Board lưu chủ sở hữu, ID thao tác riêng, ID công khai, tiêu đề, m�
 Giao dịch ghi dùng khóa cây theo chủ trước khi kiểm tra board và tệp. Chỉ tệp đang hoạt động thuộc chủ được thêm hoặc công bố. Migration có trigger trên lần đưa tệp và thư mục vào Thùng rác để gỡ công bố mục trong cùng giao dịch. Khôi phục giữ cờ công bố ở trạng thái đã gỡ. Xóa metadata tệp dọn tham chiếu bằng foreign key. Admin ẩn board qua thao tác riêng ghi nhật ký. Khóa chủ sở hữu chặn đọc công khai trong lúc tài khoản bị khóa. Dấu kiểm duyệt tồn tại độc lập với chế độ do chủ chọn.
 
 Mỗi lần đọc công khai kiểm tra chế độ board, mốc ẩn, chủ sở hữu hoạt động và trạng thái hiện tại của mục và tệp. Khám phá chỉ liệt kê `discoverable`. Bản tóm tắt công khai gồm ID công khai, tiêu đề, mô tả và thông tin mục được phát hành. Dùng ID mục trên board để truy cập nội dung. Xem trước trả đoạn UTF-8 có giới hạn dưới dạng dữ liệu text JSON. Định dạng khác hiện thông tin mục và thao tác tải theo quyền. Luồng tải bản gốc kiểm tra `allow_download` rồi stream từ backend với tên Unicode. [Kiểm chứng](verification.md)
+
+Hai route nội dung công khai dùng chung tối đa bốn lượt đọc storage đồng thời mỗi tiến trình. Khi hết chỗ, API trả `429` và `Retry-After`. Kiểm duyệt đọc vai trò dưới khóa quản trị rồi lấy khóa cây của chủ board. Bước đọc vai trò giữ thứ tự khóa tương thích với upload giữ quota.
 
 ## Migration và kiểm thử
 

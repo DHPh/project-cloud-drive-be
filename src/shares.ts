@@ -12,6 +12,7 @@ type GrantRow = {
   granted_at: Date | string;
   expires_at: Date | string;
   is_active: boolean;
+  access: 'viewer' | 'editor';
 };
 type SharedFileRow = FileRow & { owner_name: string; granted_at: string; expires_at: string };
 type SharedFolderRow = {
@@ -37,6 +38,7 @@ function grantSummary(grant: GrantRow) {
     grantedAt: new Date(grant.granted_at).toISOString(),
     expiresAt: new Date(grant.expires_at).toISOString(),
     isActive: grant.is_active,
+    access: grant.access,
   };
 }
 
@@ -66,21 +68,22 @@ export function createShareAdministration(db: DataSource, kind: keyof typeof sha
         WITH grant_time AS (
           SELECT date_trunc('milliseconds', statement_timestamp()) AS issued_at
         ), saved AS (
-          INSERT INTO ${grants} (${key}, recipient_id, granted_at, expires_at)
-          SELECT $1, $2, issued_at, COALESCE($3::timestamptz, default_file_share_expiry(issued_at))
+          INSERT INTO ${grants} (${key}, recipient_id, granted_at, expires_at, access)
+          SELECT $1, $2, issued_at, COALESCE($3::timestamptz, default_file_share_expiry(issued_at)), COALESCE($4::text, 'viewer')
           FROM grant_time
           WHERE $3::timestamptz IS NULL OR $3::timestamptz > statement_timestamp()
           ON CONFLICT (${key}, recipient_id) DO UPDATE SET
             granted_at = CASE WHEN ${grants}.expires_at > statement_timestamp()
               THEN ${grants}.granted_at ELSE EXCLUDED.granted_at END,
             expires_at = CASE WHEN $3::timestamptz IS NULL AND ${grants}.expires_at > statement_timestamp()
-              THEN ${grants}.expires_at ELSE EXCLUDED.expires_at END
-          RETURNING recipient_id, granted_at, expires_at
+              THEN ${grants}.expires_at ELSE EXCLUDED.expires_at END,
+            access = COALESCE($4::text, ${grants}.access)
+          RETURNING recipient_id, granted_at, expires_at, access
         )
         SELECT saved.*, u.email AS recipient_email, u.name AS recipient_name,
           saved.expires_at > statement_timestamp() AS is_active
         FROM saved JOIN users u ON u.id = saved.recipient_id
-      `, [resourceId, recipient.id, input.expiresAt ?? null]);
+      `, [resourceId, recipient.id, input.expiresAt ?? null, input.access ?? null]);
       if (!grant) throw invalidRequest();
       return grantSummary(grant);
     });
@@ -101,7 +104,7 @@ export function createShareAdministration(db: DataSource, kind: keyof typeof sha
       WITH owned_resource AS (
         SELECT id FROM ${resource} WHERE id = $1 AND owner_id = $2${active}
       ), matching AS NOT MATERIALIZED (
-        SELECT s.recipient_id, u.email AS recipient_email, u.name AS recipient_name, s.granted_at, s.expires_at,
+        SELECT s.recipient_id, u.email AS recipient_email, u.name AS recipient_name, s.granted_at, s.expires_at, s.access,
           s.expires_at > statement_timestamp() AS is_active
         FROM owned_resource r JOIN ${grants} s ON s.${key} = r.id JOIN users u ON u.id = s.recipient_id
       ), page_items AS (
@@ -186,12 +189,12 @@ export async function listOutgoingShares(db: DataSource, ownerId: string, { page
   const [result] = await db.query<{ total: string; items: OutgoingShareRow[] }[]>(`
     WITH owned_grants AS (
       SELECT 'file' AS kind, f.id AS resource_id, f.original_name AS resource_name,
-        s.recipient_id, s.granted_at, s.expires_at, s.expires_at > statement_timestamp() AS is_active
+        s.recipient_id, s.granted_at, s.expires_at, s.access, s.expires_at > statement_timestamp() AS is_active
       FROM files f JOIN file_shares s ON s.file_id = f.id
       WHERE f.owner_id = $1 AND f.upload_state = 'ready' AND f.trashed_at IS NULL
         AND ${fileParentIsActive('f')} AND $4 <> 'folders'
       UNION ALL
-      SELECT 'folder', f.id, f.name, s.recipient_id, s.granted_at, s.expires_at,
+      SELECT 'folder', f.id, f.name, s.recipient_id, s.granted_at, s.expires_at, s.access,
         s.expires_at > statement_timestamp()
       FROM folders f JOIN folder_shares s ON s.folder_id = f.id
       WHERE f.owner_id = $1 AND f.trash_root_id IS NULL AND $4 <> 'files'

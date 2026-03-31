@@ -52,7 +52,11 @@ async function main(): Promise<void> {
           AND to_regclass('trash_empty_requests') IS NOT NULL AND EXISTS (
             SELECT 1 FROM pg_attribute
             WHERE attrelid = to_regclass('folders') AND attname = 'description' AND NOT attisdropped
-          ) AND to_regclass('account_links') IS NOT NULL AND to_regclass('admin_audit') IS NOT NULL AS exists
+          ) AND to_regclass('account_links') IS NOT NULL AND to_regclass('admin_audit') IS NOT NULL AND (
+            SELECT count(*) = 2 FROM pg_attribute
+            WHERE attrelid IN (to_regclass('file_shares'), to_regclass('folder_shares'))
+              AND attname = 'access' AND NOT attisdropped
+          ) AND to_regclass('boards') IS NOT NULL AND to_regclass('board_items') IS NOT NULL AS exists
     `);
     if (!schema?.exists) {
       console.error('Database schema missing. Run the migration command before starting.');

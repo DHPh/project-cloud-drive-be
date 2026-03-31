@@ -21,6 +21,8 @@ Mặc định API ở `http://127.0.0.1:3001`, frontend ở `http://127.0.0.1:30
 
 `npm run db:setup` chạy migration và tạo fixture tổng hợp. Dùng `demo@example.test` hoặc `viewer@example.test` với mật khẩu mặc định `CloudDrive-Demo-2025!`. Có thể đặt `DEMO_PASSWORD` trước lần seed đầu tiên trên database thử nghiệm.
 
+Khi chạy các ca Playwright quản trị, tạo admin tổng hợp trên database kiểm thử. Sau `npm run build`, chạy `node dist/bootstrap-admin.js` với `BOOTSTRAP_ADMIN_EMAIL=admin@example.test`, `BOOTSTRAP_ADMIN_NAME` là tên tổng hợp và `BOOTSTRAP_ADMIN_PASSWORD` là mật khẩu fixture. Cấp cùng email và mật khẩu cho Playwright bằng `PLAYWRIGHT_ADMIN_EMAIL` và `PLAYWRIGHT_ADMIN_PASSWORD`.
+
 `npm run infra:down` dừng hạ tầng local và giữ các volume của project `cloud-drive-backend-dev`. Nếu cổng đã có dịch vụ dùng, chọn cổng khác trong `.env` và cập nhật `DATABASE_URL` hoặc `S3_ENDPOINT` tương ứng. Với cổng API, cập nhật địa chỉ backend trong cấu hình frontend.
 
 ## Chạy production
@@ -30,4 +32,5 @@ Xem [runbook đối soát, backup và phục hồi](docs/operations.md) để ch
 - Đặt `NODE_ENV=production` và `APP_ORIGIN` khớp chính xác origin HTTPS mà người dùng mở. Nếu frontend chạy Vercel, proxy `/api/v1` về địa chỉ HTTPS của backend và giữ header `Origin` từ trình duyệt cùng header phản hồi `Set-Cookie`. Trình duyệt gắn cookie phiên với hostname frontend. Môi trường preview dùng backend được cấu hình cho origin preview tương ứng.
 - Cấp PostgreSQL và bucket MinIO private trước khi chạy app. Cấp các biến kết nối qua cấu hình triển khai riêng. Chạy `npm ci` và `npm run build` để chuẩn bị bản phát hành. Chạy `node dist/cli.js migrate` một lần với biến môi trường của release, rồi dùng `npm start` để phục vụ request. Dùng seed trên môi trường phát triển.
 - Kiểm tra `/health` và thử đăng nhập, upload, tải xuống qua origin frontend sau rollout. Xác minh kích thước tệp được hỗ trợ qua proxy thật trước khi công bố cho người dùng. [Kiểm chứng và bàn giao](docs/verification.md)
+- Nếu backend đứng sau reverse proxy, đặt `TRUSTED_PROXY_RANGES` thành các IP hoặc CIDR hẹp đã xác minh trong chuỗi proxy. Proxy được tin cậy phải chuẩn hóa header IP chuyển tiếp. Kiểm tra giới hạn đăng nhập qua đường truyền thật trước khi mở sử dụng.
 - Tạo admin đầu tiên một lần bằng `node dist/bootstrap-admin.js` với `BOOTSTRAP_ADMIN_EMAIL`, `BOOTSTRAP_ADMIN_NAME` và `BOOTSTRAP_ADMIN_PASSWORD` cấp trong cấu hình riêng của môi trường. Kiểm tra đăng nhập bằng tài khoản đó rồi gỡ cấu hình dành cho bootstrap. Admin cấp lời mời sử dụng một lần để tạo các tài khoản tiếp theo. [Quy trình vận hành](docs/operations.md)

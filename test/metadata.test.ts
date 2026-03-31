@@ -67,7 +67,8 @@ test('DRIVE-03 adds folder descriptions and returns file detail access within th
 
   await db.initialize();
   assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
-    'AddFolderDescription1765411200000', 'AddAccountAdministration1765497600000',
+    'AddFolderDescription1765411200000', 'AddAccountAdministration1765497600000', 'AddEditorGrants1765584000000',
+    'AddPublicBoards1765670400000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   assert.deepEqual(await db.query('SELECT * FROM folders ORDER BY id'),

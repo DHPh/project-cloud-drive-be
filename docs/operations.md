@@ -29,7 +29,7 @@ Mẫu trong báo cáo giới hạn 20 cho mỗi loại lệch. Mã tham chiếu 
 
 ## Diễn tập restore và quay lui
 
-1. Cấp database trống và bucket private riêng trong môi trường cách ly. Trỏ cấu hình sang hai đích phục hồi và kiểm tra tên môi trường trước khi chạy lệnh. Giữ kết nối sản xuất ngoài buổi diễn tập.
+1. Cấp database trống và bucket private riêng trong môi trường cách ly. Chuẩn bị vai trò PostgreSQL và quyền truy cập bucket theo cấu hình đích, vì bản dump từng database dùng các vai trò đã được cấp. Trỏ cấu hình sang hai đích phục hồi và kiểm tra tên môi trường trước khi chạy lệnh. Giữ kết nối sản xuất ngoài buổi diễn tập.
 2. Nạp snapshot PostgreSQL, ví dụ với `RESTORE_DATABASE` là tên database đích và kết nối libpq của môi trường cách ly.
 
    ```sh

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { QueryFailedError, type DataSource, type EntityManager } from 'typeorm';
+import { editableFolderOwner, folderEditorGrant } from './editor-access';
 import { ApiError, notFound } from './errors';
 import { fileSummary, type FileRow } from './files';
 import { lockFolderTree, requireOwnedFolder } from './folder-tree';
@@ -63,12 +64,15 @@ export function createFolder(db: DataSource, ownerId: string, { name, parentId =
   });
 }
 
-export function updateFolder(db: DataSource, ownerId: string, folderId: string, input: FolderUpdate) {
+export async function updateFolder(db: DataSource, actorId: string, folderId: string, input: FolderUpdate) {
+  const ownerId = input.name === undefined && input.parentId === undefined
+    ? await editableFolderOwner(db, actorId, folderId) : actorId;
   return writeFolder(db, ownerId, async (manager) => {
-    const [current] = await manager.query<FolderRow[]>(
-      `SELECT ${folderFields} FROM folders WHERE id = $1 AND owner_id = $2 AND trash_root_id IS NULL`,
-      [folderId, ownerId]
-    );
+    if (actorId !== ownerId && await editableFolderOwner(manager, actorId, folderId) !== ownerId) throw notFound();
+    const [current] = await manager.query<FolderRow[]>(`
+      SELECT ${folderFields} FROM folders WHERE id = $1 AND owner_id = $2 AND trash_root_id IS NULL
+        AND EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.disabled_at IS NULL)
+    `, [folderId, ownerId]);
     if (!current) throw notFound();
 
     const name = input.name ?? current.name;
@@ -97,11 +101,16 @@ export function updateFolder(db: DataSource, ownerId: string, folderId: string, 
 
     const [updated] = await manager.query<FolderRow[]>(`
       WITH changed AS (
-        UPDATE folders SET name = $3, parent_id = $4, description = $5, updated_at = statement_timestamp()
-        WHERE id = $1 AND owner_id = $2 RETURNING ${folderFields}
+        UPDATE folders f SET name = $3, parent_id = $4, description = $5, updated_at = statement_timestamp()
+        WHERE id = $1 AND owner_id = $2
+          AND EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.disabled_at IS NULL)
+          AND ($2 = $6 OR (${folderEditorGrant('f.id', 'f.owner_id', '$6')}
+            AND EXISTS (SELECT 1 FROM users actor WHERE actor.id = $6 AND actor.disabled_at IS NULL)))
+        RETURNING ${folderFields}
       )
       SELECT * FROM changed
-    `, [folderId, ownerId, name, parentId, description]);
+    `, [folderId, ownerId, name, parentId, description, actorId]);
+    if (!updated) throw notFound();
     return updated;
   });
 }
@@ -113,7 +122,7 @@ export async function listFolder(
   const { page, limit, q, type } = options;
   const offset = (BigInt(page - 1) * BigInt(limit)).toString();
   const [results] = await db.query<{
-    access: 'owner' | 'viewer' | null; ancestors: FolderRow[]; total: string; items: ListedRow[];
+    access: 'owner' | 'editor' | 'viewer' | null; ancestors: FolderRow[]; total: string; items: ListedRow[];
   }[]>(`
     WITH current_folder AS (
       SELECT f.id, f.owner_id FROM folders f JOIN users u ON u.id = f.owner_id
@@ -129,7 +138,7 @@ export async function listFolder(
       UNION ALL
       SELECT 'owner', owner_id, NULL FROM current_folder WHERE owner_id = $1
       UNION ALL
-      SELECT 'viewer', target.owner_id, max(a.distance)
+      SELECT CASE WHEN bool_or(s.access = 'editor') THEN 'editor' ELSE 'viewer' END, target.owner_id, max(a.distance)
       FROM current_folder target CROSS JOIN ancestors a
       JOIN folder_shares s ON s.folder_id = a.id
       WHERE target.owner_id <> $1 AND s.recipient_id = $1 AND s.expires_at > statement_timestamp()
@@ -165,7 +174,7 @@ export async function listFolder(
   const { access, ancestors } = results;
   const current = ancestors.at(-1);
   const folder = current ? folderSummary(current) : null;
-  if (folder && access === 'viewer' && ancestors.length === 1) folder.parentId = null;
+  if (folder && access !== 'owner' && ancestors.length === 1) folder.parentId = null;
   const total = Number(results.total);
   return {
     data: {

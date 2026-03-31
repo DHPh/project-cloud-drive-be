@@ -106,6 +106,8 @@ async function createFixture(t: TestContext) {
     assert.deepEqual((await db.runMigrations()).map((migration) => migration.name), [
       'AddTrashPurge1765324800000', 'AddFolderDescription1765411200000',
       'AddAccountAdministration1765497600000',
+      'AddEditorGrants1765584000000',
+      'AddPublicBoards1765670400000',
     ]);
     assert.deepEqual(await db.runMigrations(), []);
     server = createServer(createApp(db, storage, appConfig({ APP_ORIGIN: origin })));

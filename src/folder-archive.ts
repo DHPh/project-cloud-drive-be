@@ -1,7 +1,5 @@
-import { once } from 'node:events';
 import { Readable, type Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import archiver from 'archiver';
 import type { DataSource } from 'typeorm';
 import { ApiError, notFound } from './errors';
 import type { createFiles } from './files';
@@ -97,18 +95,29 @@ export async function prepareFolderArchive(db: DataSource, userId: string, folde
 export async function writeFolderArchive(
   manifest: Awaited<ReturnType<typeof prepareFolderArchive>>, files: Files, userId: string, output: Writable
 ) {
-  const zip = archiver('zip', { store: true });
+  const { default: ZipStream } = await import('zip-stream');
+  const zip = new ZipStream({ store: true });
   const cancellation = new AbortController();
   const cancel = () => cancellation.abort();
   const onClose = () => { if (!output.writableFinished) cancel(); };
   output.once('close', onClose);
   const signal = cancellation.signal;
   const writing = pipeline(zip, output, { signal });
+  function append(body: Buffer | Readable, name: string) {
+    return new Promise<void>((resolve, reject) => {
+      signal.throwIfAborted();
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener('abort', onAbort, { once: true });
+      zip.entry(body, { name }, (error) => {
+        signal.removeEventListener('abort', onAbort);
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  }
   const addEntries = async () => {
     for (const directory of manifest.directories) {
-      const finished = once(zip, 'entry', { signal });
-      zip.append(Buffer.alloc(0), { name: directory + '/' });
-      await finished;
+      await append(Buffer.alloc(0), directory + '/');
     }
     for (const file of manifest.files) {
       signal.throwIfAborted();
@@ -122,18 +131,16 @@ export async function writeFolderArchive(
         }
         if (bytes !== file.size) throw new Error('Archive object is shorter than manifest');
       })(), { objectMode: false });
-      const finished = once(zip, 'entry', { signal });
       const stopEntry = () => { entry.destroy(); stream.destroy(); };
       signal.addEventListener('abort', stopEntry, { once: true });
       try {
-        zip.append(entry, { name: file.path });
-        await finished;
+        await append(entry, file.path);
       } finally {
         signal.removeEventListener('abort', stopEntry);
         stopEntry();
       }
     }
-    await zip.finalize();
+    zip.finalize();
   };
   try {
     await Promise.all([writing, addEntries()]);

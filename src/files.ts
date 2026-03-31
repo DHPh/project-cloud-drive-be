@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { DataSource, QueryRunner } from 'typeorm';
+import type { DataSource, EntityManager, QueryRunner } from 'typeorm';
+import { editableFileOwner, editableFolderOwner, fileEditorGrant, findEditableFolderOwner, folderEditorGrant } from './editor-access';
 import { ApiError, notFound, reportFailure, storageUnavailable } from './errors';
 import { fileParentIsActive, lockFolderTree, requireOwnedFolder } from './folder-tree';
 import type { Upload } from './multipart';
@@ -75,30 +76,41 @@ export async function withFileObjectLock<T>(
   }
 }
 
+async function canUpload(manager: EntityManager, actorId: string, ownerId: string, folderId: string | null) {
+  if (folderId !== null) return await findEditableFolderOwner(manager, actorId, folderId) === ownerId;
+  const [actor] = await manager.query<{ id: string }[]>('SELECT id FROM users WHERE id = $1 AND disabled_at IS NULL', [actorId]);
+  return Boolean(actor) && actorId === ownerId;
+}
+
+async function markUploadCleanup(runner: QueryRunner, id: string) {
+  await runner.query("UPDATE files SET upload_state = 'cleanup', updated_at = now() WHERE id = $1 AND upload_state = 'pending'", [id]);
+}
+
 export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeMs: number) {
-  async function upload(ownerId: string, input: Upload, fixtureId?: string) {
+  async function upload(actorId: string, input: Upload, fixtureId?: string) {
     const id = fixtureId ?? randomUUID();
     const objectKey = 'files/' + id;
     const summary = await withFileObjectLock(db, id, true, async (runner) => {
       if (fixtureId) {
         const [existing] = await runner.query(
           'SELECT ' + fileFields + ', upload_state FROM files WHERE id = $1 AND owner_id = $2',
-          [id, ownerId]
+          [id, actorId]
         ) as (FileRow & { upload_state: string })[];
         if (existing?.upload_state === 'ready') return fileSummary(existing);
         if (existing) throw new Error('Run storage reconciliation before retrying this fixture upload');
       }
 
+      const ownerId = input.folderId === null ? actorId : await editableFolderOwner(runner.manager, actorId, input.folderId);
       await runner.startTransaction();
       try {
         await lockFolderTree(runner.manager, ownerId);
-        if (input.folderId !== null) await requireOwnedFolder(runner.manager, ownerId, input.folderId);
+        if (!await canUpload(runner.manager, actorId, ownerId, input.folderId)) throw notFound();
 
         const reserved = await runner.query(`
           WITH reservation AS (
             UPDATE users
             SET used_bytes = used_bytes + $2::bigint
-            WHERE id = $1 AND quota_bytes - used_bytes >= $2::bigint
+            WHERE id = $1 AND quota_bytes - used_bytes >= $2::bigint AND disabled_at IS NULL
             RETURNING id
           )
           SELECT id FROM reservation
@@ -123,33 +135,49 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
         // A failed response can arrive after storage wrote the bytes. Recover after the grace period.
         reportFailure('File upload failed in object storage', error);
         try {
-          await runner.query(
-            "UPDATE files SET upload_state = 'cleanup', updated_at = now() WHERE id = $1 AND upload_state = 'pending'",
-            [id]
-          );
+          await markUploadCleanup(runner, id);
         } catch (cleanupError) {
           reportFailure('Unable to record storage cleanup; the pending upload can still be recovered', cleanupError);
         }
         throw storageUnavailable();
       }
 
-      // A DB error after writing the object leaves the reservation available to reconciliation.
-      const [ready] = await runner.query(`
-        WITH finalized AS (
-          UPDATE files SET upload_state = 'ready', updated_at = now()
-          WHERE id = $1 AND upload_state = 'pending'
-          RETURNING ${fileFields}
-        )
-        SELECT * FROM finalized
-      `, [id]) as FileRow[];
-      if (!ready) throw new Error('Pending upload was not finalized');
+      let ready: FileRow | undefined;
+      await runner.startTransaction();
+      try {
+        // Grant changes, moves and folder trash take the same owner lock.
+        await lockFolderTree(runner.manager, ownerId);
+        [ready] = await runner.query(`
+          WITH finalized AS (
+            UPDATE files SET upload_state = 'ready', updated_at = now()
+            WHERE id = $1 AND owner_id = $2 AND upload_state = 'pending'
+              AND EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.disabled_at IS NULL)
+              AND EXISTS (SELECT 1 FROM users actor WHERE actor.id = $3 AND actor.disabled_at IS NULL)
+              AND ((folder_id IS NULL AND $2 = $3) OR EXISTS (
+                SELECT 1 FROM folders f WHERE f.id = files.folder_id AND f.owner_id = $2 AND f.trash_root_id IS NULL
+                  AND (f.owner_id = $3 OR ${folderEditorGrant('f.id', 'f.owner_id', '$3')})
+              )) RETURNING ${fileFields}
+          ) SELECT * FROM finalized
+        `, [id, ownerId, actorId]) as FileRow[];
+        if (!ready) {
+          // Keep the owner's reservation until object reconciliation confirms deletion.
+          await markUploadCleanup(runner, id);
+        }
+        await runner.commitTransaction();
+      } catch (error) {
+        // A DB error after writing the object leaves the pending row available to reconciliation.
+        await runner.rollbackTransaction();
+        throw error;
+      }
+      if (!ready) throw notFound();
       return fileSummary(ready);
     });
     if (!summary) throw new Error('Could not acquire upload lock');
     return summary;
   }
 
-  async function update(ownerId: string, fileId: string, input: FileUpdate) {
+  async function update(actorId: string, fileId: string, input: FileUpdate) {
+    const ownerId = input.folderId === undefined ? await editableFileOwner(db, actorId, fileId) : actorId;
     return db.transaction('READ COMMITTED', async (manager) => {
       await lockFolderTree(manager, ownerId);
       if (input.folderId) await requireOwnedFolder(manager, ownerId, input.folderId);
@@ -163,12 +191,15 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
             updated_at = statement_timestamp()
           WHERE id = $1 AND owner_id = $2 AND upload_state = 'ready' AND trashed_at IS NULL
             AND ${fileParentIsActive()}
+            AND EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.disabled_at IS NULL)
+            AND ($2 = $9 OR (NOT $7::boolean AND ${fileEditorGrant('files', '$9')}
+              AND EXISTS (SELECT 1 FROM users actor WHERE actor.id = $9 AND actor.disabled_at IS NULL)))
           RETURNING ${fileFields}
         )
         SELECT * FROM changed
       `, [
         fileId, ownerId, input.originalName ?? null, 'description' in input, input.description ?? null,
-        input.tags ?? null, input.folderId !== undefined, input.folderId ?? null,
+        input.tags ?? null, input.folderId !== undefined, input.folderId ?? null, actorId,
       ]);
       if (!file) throw notFound();
       return fileSummary(file);
@@ -176,8 +207,9 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
   }
 
   async function get(userId: string, fileId: string) {
-    const [file] = await db.query<(FileRow & { access: 'owner' | 'viewer' })[]>(`
-      SELECT ${fileFields}, CASE WHEN owner_id = $2 THEN 'owner' ELSE 'viewer' END AS access
+    const [file] = await db.query<(FileRow & { access: 'owner' | 'editor' | 'viewer' })[]>(`
+      SELECT ${fileFields}, CASE WHEN owner_id = $2 THEN 'owner'
+        WHEN ${fileEditorGrant('files', '$2')} THEN 'editor' ELSE 'viewer' END AS access
       FROM files WHERE ${fileReadAccess}
     `, [fileId, userId]);
     if (!file) throw notFound();
@@ -221,7 +253,16 @@ export function createFiles(db: DataSource, storage: ObjectStorage, recoveryAgeM
           if (!file) return false;
 
           // DeleteObject is idempotent. Keep the DB row and reservation if storage cannot confirm cleanup.
-          await storage.remove(file.object_key);
+          try {
+            await storage.remove(file.object_key);
+          } catch (error) {
+            await runner.query(`
+              UPDATE files SET updated_at = statement_timestamp()
+              WHERE id = $1 AND upload_state <> 'ready'
+                AND NOT EXISTS (SELECT 1 FROM trash_purge_files queued WHERE queued.file_id = files.id)
+            `, [id]);
+            throw error;
+          }
           await runner.query(`
             WITH removed AS (
               DELETE FROM files WHERE id = $1 AND upload_state <> 'ready'

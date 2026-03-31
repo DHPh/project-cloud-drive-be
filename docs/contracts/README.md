@@ -14,6 +14,12 @@ Admin dùng `/admin/invites` và `/admin/users/{userId}/reset-password` để ph
 
 `/admin/users` liệt kê tài khoản, quota và trạng thái. `PATCH /admin/users/{userId}` nhận một hoặc nhiều trường `quotaBytes`, `disabled`, `role`. API trả `409 QUOTA_BELOW_USAGE` hoặc `LAST_ACTIVE_ADMIN` khi vi phạm ràng buộc. `/admin/audit` liệt kê thao tác thành công và không chứa token. Các API quản trị trả `403` cho người đã đăng nhập thiếu vai trò admin. [Thiết kế backend](../design.md#tài-khoản-và-quản-trị)
 
+## ACCESS-01
+
+OpenAPI `0.12.0` thêm `access: viewer | editor` vào `ShareGrant`. Chủ có thể gửi `access` khi cấp hoặc sửa quyền tệp/thư mục. Bỏ trường giữ mức quyền đang lưu. Quyền mới mặc định `viewer`. Đọc chi tiết tệp và nội dung thư mục trả `access: owner | editor | viewer` theo mức có hiệu lực cao nhất. Breadcrumb người nhận vẫn nằm trong phạm vi đọc.
+
+Editor đổi tên, mô tả và thẻ tệp qua `PATCH /files/{fileId}`, chỉ đổi mô tả thư mục qua `PATCH /folders/{folderId}` và upload vào thư mục có quyền chỉnh sửa qua `POST /files`. Tệp upload thuộc chủ thư mục và dùng quota của chủ. Mất quyền khi backend kiểm tra lại trước khi hoàn tất trả `404`. Thao tác quản lý vị trí, Thùng rác, chia sẻ và công bố dành cho chủ. [Thiết kế backend](../design.md#quyền-chỉnh-sửa-được-chia-sẻ)
+
 ## DRIVE-01
 
 OpenAPI `0.1.0` giới thiệu các thao tác sau.
@@ -71,8 +77,12 @@ OpenAPI `0.9.0` thêm `GET /drive/search` và `GET /drive/timeline`. Mỗi dòng
 
 ## SHARE-03, PREVIEW-01 và ZIP-01
 
-OpenAPI `0.10.0` thêm `GET /shared-by-me` cho quyền trực tiếp của chủ trên tệp và thư mục đang hoạt động. Bộ lọc loại và trạng thái áp trước khi phân trang. Dùng các thao tác cấp, gia hạn và thu hồi theo tài nguyên để quản lý một quyền. QR chứa cùng URL mở tài nguyên theo phiên.
+OpenAPI `0.10.0` thêm `GET /shared-by-me` cho quyền trực tiếp của chủ trên tệp và thư mục đang hoạt động. Bộ lọc loại và trạng thái áp trước khi phân trang. Dùng các thao tác cấp, gia hạn và thu hồi theo tài nguyên để quản lý một quyền. QR chứa cùng URL mở tài nguyên theo phiên. [Thiết kế danh sách quyền](../design.md#danh-sách-quyền-đã-chia-sẻ)
 
 `GET /files/{fileId}/preview` trả JPEG, PNG, WebP, GIF, PDF hoặc UTF-8 văn bản thuần sau khi kiểm tra quyền hiện hành. Giới hạn 512 KiB cho văn bản, 10 MiB cho ảnh/PDF. Các mã `PREVIEW_UNSUPPORTED` và `PREVIEW_TOO_LARGE` cho giao diện giữ đường tải gốc.
 
 `GET /folders/{folderId}/download` stream ZIP của cây hoạt động. Giới hạn 500 tệp, 500 thư mục và 100 MiB nội dung. Khi quyền đổi, dữ liệu thiếu hoặc luồng bị ngắt sau khi gửi header, kết nối kết thúc và giao diện xử lý như tải thất bại.
+
+## BOARD-01
+
+OpenAPI `0.13.0` thêm nhóm `/boards`, `/public/boards` và `/admin/boards`. Chủ tạo draft, đính kèm tệp của mình, bật công bố và tải bản gốc theo từng mục, rồi cập nhật thứ tự bằng danh sách ID đầy đủ. Khách xem board theo `publicId`, Khám phá chỉ liệt kê board discoverable. Preview công khai trả đoạn UTF-8 tối đa 4 KiB. Tải bản gốc yêu cầu mục đang công bố và đã được bật quyền tải. Khi vào Thùng rác, mục mất trạng thái công bố trong giao dịch. [Thiết kế backend](../design.md#board-công-khai-board-01)

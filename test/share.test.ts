@@ -75,6 +75,8 @@ test('SHARE-01 limits file reads to active shares and clears grants atomically o
     'AddTrashPurge1765324800000',
     'AddFolderDescription1765411200000',
     'AddAccountAdministration1765497600000',
+    'AddEditorGrants1765584000000',
+    'AddPublicBoards1765670400000',
   ]);
   assert.deepEqual(await db.runMigrations(), []);
   const calendarEnds = await db.query<{ expires_at: Date }[]>(`

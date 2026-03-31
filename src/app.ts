@@ -4,6 +4,7 @@ import type { DataSource } from 'typeorm';
 import { createAccounts } from './accounts';
 import { createAdminAdministration } from './admin';
 import type { appConfig } from './config';
+import { createBoardRouter } from './boards-routes';
 import { listDriveTimeline, searchDrive } from './drive-listing';
 import { ApiError, notFound, sendError } from './errors';
 import { createFiles } from './files';
@@ -77,6 +78,7 @@ export function createApp(
   let activeArchives = 0;
 
   app.disable('x-powered-by');
+  if (config.trustedProxyRanges.length) app.set('trust proxy', config.trustedProxyRanges);
   app.use((_req, res, next) => {
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -413,6 +415,7 @@ export function createApp(
     await pipeline(stream, res);
   });
 
+  api.use(createBoardRouter(db, storage, sessions.currentUser));
   app.use('/api/v1', api);
   app.use((_req: Request, _res: Response) => { throw notFound(); });
   app.use(sendError);

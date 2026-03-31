@@ -112,6 +112,7 @@ export const updateFileSchema = z.strictObject({
 
 export const grantFileShareSchema = z.strictObject({
   email: emailSchema,
+  access: z.enum(['viewer', 'editor']).optional(),
   expiresAt: z.iso.datetime({ offset: true })
     .regex(/T\d{2}:\d{2}:\d{2}/)
     .refine((value) => Number.isFinite(Date.parse(value)))

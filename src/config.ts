@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 type Environment = NodeJS.ProcessEnv;
 
 function required(env: Environment, name: string): string {
@@ -37,6 +39,19 @@ export function recoveryAgeMs(env: Environment = process.env): number {
   return integer(env, 'UPLOAD_RECOVERY_AGE_SECONDS', 300, 60, 86400) * 1000;
 }
 
+function trustedProxyRanges(env: Environment): string[] {
+  const ranges = (env.TRUSTED_PROXY_RANGES ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  for (const range of ranges) {
+    const [address, prefix, extra] = range.split('/');
+    const family = isIP(address ?? '');
+    const bits = family === 4 ? 32 : 128;
+    if (!family || extra !== undefined || (prefix !== undefined && (!/^\d+$/.test(prefix) || Number(prefix) < 1 || Number(prefix) > bits))) {
+      throw new Error('TRUSTED_PROXY_RANGES must contain explicit IP addresses or non-global CIDRs');
+    }
+  }
+  return ranges;
+}
+
 export function appConfig(env: Environment = process.env) {
   const production = env.NODE_ENV === 'production';
   const rawOrigin = production ? required(env, 'APP_ORIGIN') : env.APP_ORIGIN || 'http://localhost:3000';
@@ -56,6 +71,7 @@ export function appConfig(env: Environment = process.env) {
   return {
     origin: origin.origin,
     secureCookie,
+    trustedProxyRanges: trustedProxyRanges(env),
     sessionTtlMs: integer(env, 'SESSION_TTL_HOURS', 168, 1, 720) * 3600000,
     maxUploadBytes: integer(env, 'MAX_UPLOAD_BYTES', 10485760, 1, 104857600),
     uploadRecoveryAgeMs: recoveryAgeMs(env),
