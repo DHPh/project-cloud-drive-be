@@ -27,7 +27,7 @@ Khi chạy các ca Playwright quản trị, tạo admin tổng hợp trên datab
 
 ## Chạy production
 
-Xem [runbook đối soát, backup và phục hồi](docs/operations.md) để chuẩn bị điểm phục hồi PostgreSQL và MinIO cùng kiểm tra trước khi mở traffic.
+Xem [CI/CD Docker lên VPS](docs/deploy-vps.md) để cấu hình GitHub Actions và lần triển khai đầu tiên. Chuẩn bị điểm phục hồi PostgreSQL và MinIO cùng kiểm tra trước khi mở traffic theo [runbook đối soát, backup và phục hồi](docs/operations.md).
 
 - Đặt `NODE_ENV=production` và `APP_ORIGIN` khớp chính xác origin HTTPS mà người dùng mở. Nếu frontend chạy Vercel, proxy `/api/v1` về địa chỉ HTTPS của backend và giữ header `Origin` từ trình duyệt cùng header phản hồi `Set-Cookie`. Trình duyệt gắn cookie phiên với hostname frontend. Môi trường preview dùng backend được cấu hình cho origin preview tương ứng.
 - Cấp PostgreSQL và bucket MinIO private trước khi chạy app. Cấp các biến kết nối qua cấu hình triển khai riêng. Chạy `npm ci` và `npm run build` để chuẩn bị bản phát hành. Chạy `node dist/cli.js migrate` một lần với biến môi trường của release, rồi dùng `npm start` để phục vụ request. Dùng seed trên môi trường phát triển.

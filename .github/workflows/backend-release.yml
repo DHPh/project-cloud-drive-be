@@ -1,0 +1,87 @@
+name: Backend CI and release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: cloud_drive
+          POSTGRES_PASSWORD: cloud-drive-ci-fixture
+          POSTGRES_DB: cloud_drive_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cloud_drive -d cloud_drive_test"
+          --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      BACKEND_TEST_DATABASE_URL: postgresql://cloud_drive:cloud-drive-ci-fixture@127.0.0.1:5432/cloud_drive_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    concurrency:
+      group: cloud-drive-backend-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build release image
+        run: |
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --tag "cloud-drive-be:$GITHUB_SHA" .
+      - name: Send and activate release
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : "${DEPLOY_HOST:?Set DEPLOY_HOST in GitHub Actions variables}"
+          : "${DEPLOY_USER:?Set DEPLOY_USER in GitHub Actions variables}"
+          : "${DEPLOY_SSH_PRIVATE_KEY:?Set the dedicated deployment key}"
+          : "${DEPLOY_SSH_KNOWN_HOSTS:?Set the verified SSH host key}"
+          port="${DEPLOY_PORT:-22}"
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo "Invalid DEPLOY_HOST" >&2; exit 1; }
+          [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ && "$DEPLOY_USER" != root ]] || { echo "Set a dedicated non-root DEPLOY_USER" >&2; exit 1; }
+          [[ "$port" =~ ^[0-9]{1,5}$ ]] && ((10#$port >= 1 && 10#$port <= 65535)) || { echo "Invalid DEPLOY_PORT" >&2; exit 1; }
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          umask 077
+          ssh_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" | tr -d '\r' >"$ssh_dir/key"
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" | tr -d '\r' >"$ssh_dir/known_hosts"
+          docker save "cloud-drive-be:$GITHUB_SHA" | gzip -1c | \
+            ssh -T -p "$port" -i "$ssh_dir/key" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o "UserKnownHostsFile=$ssh_dir/known_hosts" \
+              -- "$DEPLOY_USER@$DEPLOY_HOST" "sudo -n /opt/project-cloud-drive-be/release.sh $GITHUB_SHA"

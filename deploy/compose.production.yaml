@@ -1,0 +1,43 @@
+name: cloud-drive-production
+
+services:
+  api:
+    image: ${CLOUD_DRIVE_IMAGE:?Set CLOUD_DRIVE_IMAGE to the immutable backend release image}
+    env_file:
+      - ${CLOUD_DRIVE_API_ENV_FILE:?Set CLOUD_DRIVE_API_ENV_FILE to the operating API environment file}
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3001"
+    ports:
+      - "127.0.0.1:13001:3001"
+    networks:
+      - backend
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 448m
+    restart: unless-stopped
+    stop_grace_period: 35s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3001/health', { signal: AbortSignal.timeout(2500) })
+          .then(response => process.exit(response.ok ? 0 : 1), () => process.exit(1))
+      interval: 15s
+      timeout: 4s
+      start_period: 15s
+      retries: 4
+
+networks:
+  backend:
+    name: ${CLOUD_DRIVE_NETWORK:-cloud-drive-backend}
+    external: true
