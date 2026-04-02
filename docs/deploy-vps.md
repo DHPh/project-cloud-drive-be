@@ -1,13 +1,13 @@
 # CI/CD backend lên VPS
 
-GitHub Actions kiểm tra pull request, lần push lên nhánh **main** và mỗi lần chạy thủ công. Job CI dùng Node.js 24 và PostgreSQL 17 cách ly để chạy cài đặt từ lockfile, typecheck, build và test. Job triển khai chạy trên **main** khi chọn **Run workflow** trong **Backend CI and release** và CI của lần chạy đó đạt. GitHub tuần tự hóa các lần triển khai. VPS cũng khóa lệnh phát hành bằng `flock`. [Workflow](../.github/workflows/backend-release.yml)
+GitHub Actions kiểm tra pull request và lần push hoặc merge vào **main**. Job CI dùng Node.js 24 và PostgreSQL 17 cách ly để cài đặt từ lockfile, typecheck, build và test. Khi CI đạt, mỗi push vào **main** tự phát hành nếu SHA vẫn là đầu nhánh. **Run workflow** có thể dùng để thử lại commit hiện tại trên **main**. GitHub xếp hàng các lần triển khai và VPS khóa lệnh phát hành bằng `flock`. [Workflow](../.github/workflows/backend-release.yml)
 
 ## Chuẩn bị VPS một lần
 
 1. Cấp Docker Engine, Docker Compose plugin, OpenSSH, sudo có hỗ trợ regex đối số, gzip và flock. Kiểm tra kiến trúc của VPS tương thích với image mà runner build.
 2. Tạo bridge ngoài Compose bằng `docker network create cloud-drive-backend` nếu chưa có. Cấp PostgreSQL 17 và MinIO riêng cho production rồi kết nối cả hai vào bridge này với tên hoặc alias DNS ổn định. Dùng database riêng, bucket private unversioned và tài khoản MinIO có quyền đọc, ghi, liệt kê và xóa object trong bucket của ứng dụng. Giữ cổng PostgreSQL, MinIO và console trên mạng riêng. Kiểm tra DNS nội bộ và quyền trước khi phát hành. Môi trường fixture có thể chọn bridge riêng bằng biến `CLOUD_DRIVE_NETWORK` cấp cho tiến trình Compose.
-3. Cài từ bản đã review vào `/opt/project-cloud-drive-be`, thư mục thuộc `root:root` và chỉ root có quyền sửa. Lưu `deploy/compose.production.yaml` thành `compose.production.yaml` với mode `0644`, `deploy/release.sh` thành `release.sh` với mode `0755` và xuống dòng LF, và cấu hình riêng `api.env` với mode `0600`. Script và Compose trên VPS do người vận hành cập nhật khi hai tệp nguồn thay đổi. [Compose](../deploy/compose.production.yaml) · [Script phát hành](../deploy/release.sh)
-4. Tạo tài khoản SSH triển khai riêng, ví dụ `cloud-drive-deploy`, và chỉ cài public key riêng của runner cho tài khoản đó. Giữ tài khoản ngoài nhóm Docker, tắt đăng nhập mật khẩu và giới hạn tính năng forwarding của key triển khai bằng `restrict`. Dùng khóa triển khai riêng cho GitHub Actions.
+3. Cài từ bản đã review vào `/opt/project-cloud-drive-be`, thư mục thuộc `root:root` và chỉ root có quyền sửa. Lưu `deploy/compose.production.yaml` với mode `0644`, các script `deploy/release.sh` và `deploy/ssh-entrypoint.sh` với mode `0755` và xuống dòng LF, cùng `api.env` với mode `0600`. Tên tệp trên VPS giữ nguyên, bỏ tiền tố thư mục `deploy/`. Người vận hành cập nhật các tệp khi thay đổi cấu hình hoặc logic phát hành. [Compose](../deploy/compose.production.yaml) · [Script phát hành](../deploy/release.sh) · [SSH entry point](../deploy/ssh-entrypoint.sh)
+4. Tạo tài khoản SSH triển khai riêng như `cloud-drive-deploy`, với khả năng chạy forced command và mật khẩu bị khóa. Giữ tài khoản ngoài nhóm Docker. Tệp `authorized_keys` do root quản lý, dùng khóa riêng của runner cùng options `restrict,command="/opt/project-cloud-drive-be/ssh-entrypoint.sh"`. Entry point chỉ chấp nhận `deploy <SHA>` rồi chuyển tiếp cho `sudo`.
 5. Tạo một tệp sudoers riêng do root sở hữu. Dùng tên tài khoản thật tương ứng với `DEPLOY_USER` và kiểm tra cú pháp bằng `visudo -cf`. Rule dưới đây chỉ cấp quyền chạy script cố định với đúng một SHA gồm 40 ký tự hex viết thường. Script nhận image đã nén qua stdin và tự xác thực số đối số, SHA và nhãn revision của image.
 
 ~~~sudoers
@@ -47,16 +47,17 @@ Trong repo backend, mở **Settings → Secrets and variables → Actions** và 
 | Variable | `DEPLOY_HOST` | Tên DNS hoặc IPv4 mà runner truy cập được. Cấp hostname thật của VPS dùng cho SSH. |
 | Variable | `DEPLOY_PORT` | Cổng SSH, mặc định `22` khi để trống. |
 | Variable | `DEPLOY_USER` | Tên tài khoản SSH triển khai đã cấp trên VPS. |
+| Variable | `DEPLOY_HEALTH_URL` | URL HTTPS công khai của backend kết thúc bằng `/health`. |
 | Secret | `DEPLOY_SSH_PRIVATE_KEY` | Private key dành riêng cho runner, với public key tương ứng đã cài cho tài khoản triển khai. |
 | Secret | `DEPLOY_SSH_KNOWN_HOSTS` | Dòng known_hosts đầy đủ của chính VPS. Cấp hostname hoặc IPv4 giống `DEPLOY_HOST` ở cổng 22, hoặc dạng `[host]:port` với cổng khác. Dòng chứa loại khóa và public host key thực tế của máy. |
 
-Lấy public host key thật qua phiên quản trị hoặc console đã xác thực. Đối chiếu fingerprint qua kênh tin cậy trước khi lưu dòng known_hosts. Runner dùng `StrictHostKeyChecking=yes`, khóa triển khai riêng và `BatchMode=yes`. Workflow chỉ tham chiếu secret SSH trong job triển khai thủ công từ `main` sau khi CI đạt.
+Lấy public host key thật qua phiên quản trị hoặc console đã xác thực. Đối chiếu fingerprint qua kênh tin cậy trước khi lưu dòng known_hosts. Runner dùng `StrictHostKeyChecking=yes`, khóa triển khai riêng và `BatchMode=yes`. Job triển khai dùng secret SSH sau khi CI trên `main` đạt. Credential của PostgreSQL và MinIO cùng `APP_ORIGIN` được cung cấp qua `api.env` trên VPS. `CLOUD_DRIVE_API_ORIGIN` được cung cấp qua Vercel.
 
 ## Chạy và kiểm tra release
 
-1. Xác nhận commit trên **main**, thay đổi migration, cấu hình đã cài trên VPS và cặp backup PostgreSQL/MinIO khi môi trường đã có dữ liệu cần giữ. Dùng cửa sổ dừng ghi của runbook cho bản sao cùng điểm khôi phục.
-2. Chạy **Backend CI and release** thủ công trên **main**. Job build image `cloud-drive-be:<SHA>`, gửi qua SSH rồi gọi script trên VPS. Script kiểm tra cấu hình, dừng API, chạy `node dist/cli.js migrate` bằng container một lần, rồi khởi động lại API và chờ healthcheck. `/opt/project-cloud-drive-be/current-image` chỉ được cập nhật sau khi API qua kiểm tra cục bộ.
-3. Trên VPS, kiểm tra `curl --fail --silent --show-error http://127.0.0.1:13001/health`. Khi domain sẵn sàng, thử thêm `/health` qua HTTPS. Healthcheck xác nhận API và PostgreSQL. Kiểm tra MinIO riêng bằng audit chỉ đọc với cấu hình production hoặc bằng luồng upload/tải đúng byte bằng tài khoản được phép. [Runbook đối soát](operations.md#đối-soát-chỉ-đọc)
+1. Trước khi merge thay đổi migration có rủi ro dữ liệu, xác nhận cấu hình trên VPS và cặp backup PostgreSQL/MinIO. Dùng cửa sổ dừng ghi của runbook cho bản sao cùng điểm khôi phục.
+2. Push hoặc merge vào **main** và theo dõi **Backend CI and release**. Job build image `cloud-drive-be:<SHA>`, xác nhận SHA còn là đầu nhánh rồi gửi qua SSH cho script trên VPS. Script kiểm tra cấu hình, dừng API, chạy `node dist/cli.js migrate` bằng container một lần, rồi khởi động API và chờ healthcheck. `/opt/project-cloud-drive-be/current-image` được cập nhật sau khi API qua kiểm tra cục bộ.
+3. Job chỉ thành công khi `/health` qua HTTPS trả `ready`. Healthcheck xác nhận API và PostgreSQL. Kiểm tra MinIO riêng bằng audit chỉ đọc với cấu hình production hoặc bằng luồng upload/tải đúng byte bằng tài khoản được phép. [Runbook đối soát](operations.md#đối-soát-chỉ-đọc)
 4. Sau migration đầu tiên, người vận hành tạo admin một lần theo [lệnh bootstrap](#tạo-admin-đầu-tiên). Đăng nhập qua frontend thật, kiểm tra phiên sau reload rồi tạo tài khoản tiếp theo bằng link mời.
 5. Kiểm tra nhanh upload, tải xuống, tên Unicode, thu hồi quyền và quyền tải công khai qua URL frontend. Thử với tệp gần giới hạn dự kiến khi domain và Vercel rewrite đã sẵn sàng. Ghi SHA, phiên bản OpenAPI, thời điểm rollout và các bước đã kiểm tra. [Bộ ca phát hành](verification.md)
 

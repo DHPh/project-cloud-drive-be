@@ -41,13 +41,14 @@ jobs:
       - run: npm test
 
   deploy:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: ci
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     concurrency:
       group: cloud-drive-backend-production
       cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,11 +57,26 @@ jobs:
         run: |
           docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --tag "cloud-drive-be:$GITHUB_SHA" .
+      - name: Confirm this commit is still on top of main
+        id: current-main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$GITHUB_SHA" != "$main_sha" ]]; then
+            echo "Skipping $GITHUB_SHA. Main is now at $main_sha."
+            exit 0
+          fi
+          echo 'deploy=true' >> "$GITHUB_OUTPUT"
       - name: Send and activate release
+        if: steps.current-main.outputs.deploy == 'true'
         env:
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
           DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
           DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
           DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
         shell: bash
@@ -68,11 +84,13 @@ jobs:
           set -Eeuo pipefail
           : "${DEPLOY_HOST:?Set DEPLOY_HOST in GitHub Actions variables}"
           : "${DEPLOY_USER:?Set DEPLOY_USER in GitHub Actions variables}"
+          : "${DEPLOY_HEALTH_URL:?Set the public HTTPS health URL in GitHub Actions variables}"
           : "${DEPLOY_SSH_PRIVATE_KEY:?Set the dedicated deployment key}"
           : "${DEPLOY_SSH_KNOWN_HOSTS:?Set the verified SSH host key}"
           port="${DEPLOY_PORT:-22}"
           [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo "Invalid DEPLOY_HOST" >&2; exit 1; }
           [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ && "$DEPLOY_USER" != root ]] || { echo "Set a dedicated non-root DEPLOY_USER" >&2; exit 1; }
+          [[ "$DEPLOY_HEALTH_URL" =~ ^https://[a-zA-Z0-9][a-zA-Z0-9.-]*/health$ ]] || { echo "Invalid DEPLOY_HEALTH_URL" >&2; exit 1; }
           [[ "$port" =~ ^[0-9]{1,5}$ ]] && ((10#$port >= 1 && 10#$port <= 65535)) || { echo "Invalid DEPLOY_PORT" >&2; exit 1; }
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
           umask 077
@@ -84,4 +102,7 @@ jobs:
             ssh -T -p "$port" -i "$ssh_dir/key" \
               -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
               -o "UserKnownHostsFile=$ssh_dir/known_hosts" \
-              -- "$DEPLOY_USER@$DEPLOY_HOST" "sudo -n /opt/project-cloud-drive-be/release.sh $GITHUB_SHA"
+              -- "$DEPLOY_USER@$DEPLOY_HOST" "deploy $GITHUB_SHA"
+          curl --fail --silent --show-error --proto '=https' --retry 5 --retry-all-errors \
+            --retry-delay 2 --max-time 10 -- "$DEPLOY_HEALTH_URL" \
+            | jq -e '.success == true and .data.status == "ready"' > /dev/null
