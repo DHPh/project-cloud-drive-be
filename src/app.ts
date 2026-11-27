@@ -90,7 +90,8 @@ export function createApp(
   });
 
   api.use((req, _res, next) => {
-    if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method) && req.get('origin') !== config.origin) {
+    const requestOrigin = req.get('origin');
+    if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method) && (!requestOrigin || !config.origins.includes(requestOrigin))) {
       throw new ApiError(403, 'FORBIDDEN', 'The request is outside the allowed application origin.');
     }
     next();

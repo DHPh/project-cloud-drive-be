@@ -20,7 +20,7 @@ cloud-drive-deploy ALL=(root) NOPASSWD: /opt/project-cloud-drive-be/release.sh ^
 
 | Biến | Giá trị |
 | --- | --- |
-| `APP_ORIGIN` | Chính xác origin HTTPS mà người dùng sẽ mở trên Vercel hoặc domain frontend đã gắn. Dùng origin ứng dụng gồm scheme và hostname, bỏ path và dấu gạch chéo cuối. |
+| `APP_ORIGIN` | Một origin HTTPS hoặc danh sách origin HTTPS phân tách bằng dấu phẩy (vd `https://cloud.dhpham.dev,https://project-cloud-drive-fe.vercel.app`) mà người dùng mở trên domain frontend/Vercel. Mỗi mục chỉ gồm scheme và hostname, bỏ path và dấu gạch chéo cuối. |
 | `DATABASE_URL` | Kết nối PostgreSQL từ trong mạng container tới database riêng. Lần chạy migration cần quyền tạo và thay đổi schema. |
 | `S3_ENDPOINT` | Origin MinIO mà container API truy cập được qua mạng riêng. |
 | `S3_REGION`, `S3_BUCKET` | Region và tên bucket production đã cấp. |

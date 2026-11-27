@@ -21,6 +21,21 @@ test('production requires a matching HTTPS origin and Secure cookie', () => {
     NODE_ENV: 'production', APP_ORIGIN: 'https://drive.example.test', SESSION_COOKIE_SECURE: 'false',
   }));
   assert.equal(appConfig({ NODE_ENV: 'production', APP_ORIGIN: 'https://drive.example.test' }).secureCookie, true);
+
+  const multi = appConfig({
+    NODE_ENV: 'production',
+    APP_ORIGIN: 'https://cloud.dhpham.dev, https://project-cloud-drive-fe.vercel.app',
+  });
+  assert.equal(multi.origin, 'https://cloud.dhpham.dev');
+  assert.deepEqual(multi.origins, ['https://cloud.dhpham.dev', 'https://project-cloud-drive-fe.vercel.app']);
+  assert.equal(multi.secureCookie, true);
+
+  assert.throws(() => appConfig({
+    NODE_ENV: 'production',
+    APP_ORIGIN: 'https://cloud.dhpham.dev, http://localhost:3000',
+  }));
+  assert.throws(() => appConfig({ APP_ORIGIN: 'https://cloud.dhpham.dev,' }));
+  assert.throws(() => appConfig({ APP_ORIGIN: 'https://cloud.dhpham.dev/' }));
 });
 
 test('proxy trust requires explicit valid IPs or non-global CIDRs', () => {

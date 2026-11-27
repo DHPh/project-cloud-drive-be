@@ -55,21 +55,36 @@ function trustedProxyRanges(env: Environment): string[] {
 export function appConfig(env: Environment = process.env) {
   const production = env.NODE_ENV === 'production';
   const rawOrigin = production ? required(env, 'APP_ORIGIN') : env.APP_ORIGIN || 'http://localhost:3000';
-  const origin = new URL(rawOrigin);
-  if (!['http:', 'https:'].includes(origin.protocol) || origin.origin !== rawOrigin) {
-    throw new Error('APP_ORIGIN must be an HTTP origin without a path or trailing slash');
-  }
+  const rawOrigins = rawOrigin.split(',').map((value) => value.trim());
+  const parsedOrigins = rawOrigins.map((entry) => {
+    if (!entry) {
+      throw new Error('APP_ORIGIN must be an HTTP origin without a path or trailing slash');
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(entry);
+    } catch {
+      throw new Error('APP_ORIGIN must be an HTTP origin without a path or trailing slash');
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== entry) {
+      throw new Error('APP_ORIGIN must be an HTTP origin without a path or trailing slash');
+    }
+    return parsed.origin;
+  });
+  const origins = Array.from(new Set(parsedOrigins));
   const cookieOverride = env.SESSION_COOKIE_SECURE;
   if (cookieOverride !== undefined && cookieOverride !== 'true' && cookieOverride !== 'false') {
     throw new Error('SESSION_COOKIE_SECURE must be true or false');
   }
-  const secureCookie = cookieOverride === undefined ? origin.protocol === 'https:' : cookieOverride === 'true';
-  if (production && (origin.protocol !== 'https:' || !secureCookie)) {
+  const allHttps = origins.every((value) => value.startsWith('https://'));
+  const secureCookie = cookieOverride === undefined ? allHttps : cookieOverride === 'true';
+  if (production && (!allHttps || !secureCookie)) {
     throw new Error('Production requires an HTTPS APP_ORIGIN and a Secure session cookie');
   }
 
   return {
-    origin: origin.origin,
+    origin: origins[0],
+    origins,
     secureCookie,
     trustedProxyRanges: trustedProxyRanges(env),
     sessionTtlMs: integer(env, 'SESSION_TTL_HOURS', 168, 1, 720) * 3600000,
